@@ -1,0 +1,21 @@
+# Кэш и временные файлы
+__pycache__/
+*.py[cod]
+*.log
+*.db
+*.sqlite3
+
+# Среда разработки
+.venv/
+.env
+.idea/
+.vscode/
+
+# Бинарные файлы и архивы
+*.zip
+*.tar.gz
+*.rar
+
+# Файлы ОС
+.DS_Store
+Thumbs.db
