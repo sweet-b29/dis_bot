@@ -1,10 +1,13 @@
-import discord
+import discord, os
 from discord.ext import commands
-from config import TOKEN, DATABASE_URL
 from modules import lobby, draft, rating, database
 from loguru import logger
 from modules.lobby import CreateLobbyButton
 # from modules import modal
+
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
+
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='.', intents=intents)
@@ -70,7 +73,7 @@ async def delete_empty_vc(ctx):
 
 # Проверяем наличие токена перед запуском
 if not TOKEN:
-    raise ValueError("❌ Ошибка: Отсутствует DISCORD_BOT_TOKEN в .env файле!")
+    raise ValueError("❌ Ошибка: DISCORD_BOT_TOKEN не найден. Проверь .env локально или переменные окружения Railway.")
 
 # Настройка модулей
 lobby.setup(bot)
