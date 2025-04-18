@@ -73,7 +73,7 @@ async def delete_empty_vc(ctx):
 
 # Проверяем наличие токена перед запуском
 if not TOKEN:
-    raise ValueError("❌ Ошибка: DISCORD_BOT_TOKEN не найден. Проверь .env локально или переменные окружения Railway.")
+    raise ValueError("❌ Ошибка: DISCORD_BOT_TOKEN не найден.")
 
 # Настройка модулей
 lobby.setup(bot)
