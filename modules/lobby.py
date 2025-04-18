@@ -5,7 +5,7 @@ import random
 from modules.draft import Draft
 from loguru import logger
 
-MAX_PLAYERS = 10  # Измените при необходимости
+MAX_PLAYERS = 10
 
 
 class JoinLobbyButton(View):
