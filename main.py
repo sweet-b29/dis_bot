@@ -18,7 +18,7 @@ async def on_ready():
         bot.lobby_counter = 0
     logger.success(f"Бот {bot.user} успешно запущен.")
 
-    channel_id = 1353767233070956564
+    channel_id = 1364267777384517816
     channel = bot.get_channel(channel_id)
 
     if channel:
