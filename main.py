@@ -4,6 +4,9 @@ from modules import lobby, draft, rating, database
 from loguru import logger
 from modules.lobby import CreateLobbyButton
 # from modules import modal
+from dotenv import load_dotenv
+load_dotenv()
+
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -48,13 +51,17 @@ async def on_ready():
         await bot.close()
 @bot.event
 async def on_voice_state_update(member, before, after):
-    if before.channel and len(before.channel.members) == 0:
-        if before.channel.name.startswith("♦︎") or before.channel.name.startswith("♣︎"):
+    if before.channel and before.channel != after.channel:
+        vc = before.channel
+
+        # Проверка: канал пуст + это кастомный канал (начинается с спецсимволов)
+        if len(vc.members) == 0 and any(vc.name.startswith(prefix) for prefix in ("♦", "♣")):
             try:
-                await before.channel.delete(reason="Все участники покинули канал.")
-                logger.info(f"🗑 Голосовой канал удалён: {before.channel.name}")
+                await vc.delete(reason="Все участники покинули канал.")
+                logger.info(f"🗑 Голосовой канал автоматически удалён: {vc.name}")
             except Exception as e:
-                logger.warning(f"⚠ Ошибка при удалении голосового канала: {e}")
+                logger.warning(f"❌ Не удалось удалить голосовой канал {vc.name}: {e}")
+
 
 
 @bot.command(name='delete_empty_vc')

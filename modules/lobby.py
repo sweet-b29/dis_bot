@@ -37,6 +37,8 @@ class Lobby:
     count = 0
 
     def __init__(self, guild: discord.Guild, category_id: int):
+        self.message = None
+        self.view = None
         Lobby.count += 1
         self.guild = guild
         self.members: list[discord.Member] = []
@@ -63,11 +65,11 @@ class Lobby:
                 category=category
             )
 
-            view = JoinLobbyButton(self)
-            await self.channel.send(
+            self.view = JoinLobbyButton(self)
+            self.message = await self.channel.send(
                 f"🎮 Нажмите на кнопку ниже, чтобы присоединиться к лобби.\n"
                 f"👥 Участники: 0/{MAX_PLAYERS}.",
-                view=view
+                view=self.view
             )
 
         except Exception as e:
@@ -77,11 +79,20 @@ class Lobby:
         if member in self.members:
             await self.channel.send(f"{member.mention}, вы уже в лобби.")
             return
+        if len(self.members) >= MAX_PLAYERS:
+            await self.channel.send(f"{member.mention}, лобби уже заполнено.")
+            return
 
         self.members.append(member)
         await self.channel.send(f"{member.mention} присоединился к лобби ({len(self.members)}/{MAX_PLAYERS})")
 
         if len(self.members) >= MAX_PLAYERS and not self.draft_started:
+            # Убирает кнопку совсем
+            for item in self.view.children:
+                if isinstance(item, discord.ui.Button):
+                    item.disabled = True
+            await self.message.edit(view=self.view)
+
             await self.close_lobby()
 
     async def close_lobby(self):

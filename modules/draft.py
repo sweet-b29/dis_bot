@@ -17,11 +17,12 @@ class Draft:
         self.draft_message = None
         self.available_maps = [
             "Ascent", "Bind", "Haven", "Split", "Icebox",
-            "Breeze", "Fracture", "Lotus", "Sunset"
+            "Breeze", "Fracture", "Lotus", "Sunset", "Abyss", "Pearl"
         ]
         self.selected_map = None
         self.banned_maps = []
         self.voice_channels = []
+        self.team_sides = {}
 
     async def start(self):
         for captain in self.captains:
@@ -88,6 +89,17 @@ class Draft:
         await self.channel.send(embed=embed, view=MapDraftView(self))
         logger.info("Начался драфт карт.")
 
+    async def choose_sides(self):
+        captain = self.captains[0]  # Капитан первой команды выбирает
+        view = SideSelectView(self, captain)
+
+        embed = discord.Embed(
+            title="🧭 Выбор сторон",
+            description=f"{captain.mention}, выбери сторону для своей команды:",
+            color=discord.Color.orange()
+        )
+        self.side_message = await self.channel.send(embed=embed, view=view)
+
     async def create_voice_channels(self):
         category = self.channel.category
         teams = [self.teams[self.captains[0]], self.teams[self.captains[1]]]
@@ -138,15 +150,19 @@ class Draft:
     async def send_map_embed(self):
         map_name = self.selected_map
         file_path = f"modules/maps/{map_name}.webp"
-
-        if not os.path.exists(file_path):
-            # await self.channel.send(f"❌ Картинка для карты **{map_name}** не найдена.")
-            return
+        team_1 = self.captains[0]
+        team_2 = self.captains[1]
+        side_1 = self.team_sides[team_1]
+        side_2 = self.team_sides[team_2]
 
         file = File(file_path, filename="map.webp")
         embed = Embed(
-            title="✅ Карта выбрана!",
-            description=f"Игра будет проходить на **{map_name}**.",
+            title="✅ Финальное подтверждение матча!",
+            description=(
+                f"Игра будет проходить на **{map_name}**.\n"
+                f"♦ **{team_1.display_name}** играет за **{side_1}**\n"
+                f"♣ **{team_2.display_name}** играет за **{side_2}**"
+            ),
             color=discord.Color.green()
         )
         embed.set_image(url="attachment://map.webp")
@@ -154,8 +170,7 @@ class Draft:
 
     async def end_map_ban(self):
         logger.info(f"Финальная карта: {self.selected_map}")
-        await self.send_map_embed()
-        await self.create_voice_channels()
+        await self.choose_sides()
 
 
 class DraftView(discord.ui.View):
@@ -216,6 +231,51 @@ class MapButton(discord.ui.Button):
                 color=discord.Color.purple()
             )
             await interaction.response.edit_message(embed=embed, view=MapDraftView(self.draft))
+
+class SideSelectView(discord.ui.View):
+    def __init__(self, draft: Draft, captain: discord.Member):
+        super().__init__(timeout=None)
+        self.draft = draft
+        self.captain = captain
+
+    @discord.ui.button(label="♦ Атака", style=discord.ButtonStyle.danger)
+    async def attack(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.select_side(interaction, "Атака")
+
+    @discord.ui.button(label="♣ Защита", style=discord.ButtonStyle.primary)
+    async def defense(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.select_side(interaction, "Защита")
+
+    async def select_side(self, interaction: discord.Interaction, chosen_side: str):
+        if interaction.user != self.captain:
+            await interaction.response.send_message("❌ Только капитан может выбирать сторону!", ephemeral=True)
+            return
+
+        other_side = "Защиту" if chosen_side == "Атаку" else "Атаку"
+        team_1 = self.captain
+        team_2 = self.draft.captains[1] if self.draft.captains[0] == team_1 else self.draft.captains[0]
+
+        self.draft.team_sides = {
+            team_1: chosen_side,
+            team_2: other_side
+        }
+
+        embed = discord.Embed(
+            title="✅ Выбор сторон завершён!",
+            description=(
+                f"**{team_1.display_name}** играет за **♦ {chosen_side}**\n"
+                f"**{team_2.display_name}** играет за **♣ {other_side}**"
+            ),
+            color=discord.Color.green()
+        )
+
+        for child in self.children:
+            child.disabled = True
+
+        await interaction.response.edit_message(embed=embed, view=self)
+        await self.draft.send_map_embed()
+        await self.draft.create_voice_channels()
+
 
 def setup(bot):
     pass  # пока заглушка, можно расширить в будущем
