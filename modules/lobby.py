@@ -135,7 +135,7 @@ class CreateLobbyButton(View):
     async def create_lobby_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
 
-        category_id = 1353766991076393080  # Указать ID нужной категории
+        category_id = 1364267777384517816  # Указать ID нужной категории
         lobby_instance = Lobby(interaction.guild, category_id)
         await lobby_instance.create_channel()
 
