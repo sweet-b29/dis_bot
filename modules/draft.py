@@ -4,7 +4,7 @@ import os
 from discord import File, Embed
 import random
 
-MAX_PLAYERS = 10  # временно для тестов, в проде ставим 10
+MAX_PLAYERS = 10  # Измените при необходимости
 
 class Draft:
     def __init__(self, guild, channel, captains, players):
@@ -192,7 +192,6 @@ class PlayerButton(discord.ui.Button):
         if interaction.user != self.draft.current_captain:
             await interaction.response.send_message("❌ Сейчас не ваш ход выбирать.", ephemeral=True)
             return
-        await self.draft.pick_player(interaction, self.player)
 
 
 class MapDraftView(discord.ui.View):
