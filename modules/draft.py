@@ -192,6 +192,7 @@ class PlayerButton(discord.ui.Button):
         if interaction.user != self.draft.current_captain:
             await interaction.response.send_message("❌ Сейчас не ваш ход выбирать.", ephemeral=True)
             return
+        await self.draft.pick_player(interaction, self.player)
 
 
 class MapDraftView(discord.ui.View):
