@@ -23,6 +23,14 @@ async def init_db():
                     wins INTEGER DEFAULT 0
                 );
             """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS player_profiles (
+                    user_id BIGINT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    rank TEXT NOT NULL
+                )
+            """)
+
         logger.success("✅ База данных инициализирована.")
     except Exception as e:
         logger.error(f"❌ Ошибка инициализации БД: {e}")
@@ -59,6 +67,22 @@ async def execute_query(query, *args):
     global db_pool
     async with db_pool.acquire() as connection:
         await connection.execute(query, *args)
+
+async def save_player_profile(user_id: int, username: str, rank: str):
+    query = """
+    INSERT INTO player_profiles (user_id, username, rank)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (user_id) DO UPDATE
+    SET username = EXCLUDED.username,
+        rank = EXCLUDED.rank
+    """
+    await db_pool.execute(query, user_id, username, rank)
+
+async def get_player_profile(user_id: int):
+    query = "SELECT username, rank FROM player_profiles WHERE user_id = $1"
+    return await db_pool.fetchrow(query, user_id)
+
+
 
 # async def get_game_nickname(user_id: int):
 #     query = "SELECT game_nickname FROM players WHERE user_id = $1"
