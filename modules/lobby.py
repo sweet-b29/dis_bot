@@ -5,6 +5,7 @@ import random
 from modules import database
 from modules.draft import Draft, format_player_name
 from loguru import logger
+import asyncio
 
 MAX_PLAYERS = 3 # Измените при необходимости
 
@@ -57,6 +58,8 @@ class Lobby:
         self.name = f"◎︎лобби-{Lobby.count}"
         self.captains: list[discord.Member] = []
         self.draft_started = False
+        self.victory_registered = False
+        self.teams: list[list[discord.Member]] = [[], []]
 
     async def create_channel(self):
         try:
@@ -84,6 +87,8 @@ class Lobby:
 
         except Exception as e:
             logger.error(f"Ошибка при создании канала лобби: {e}")
+
+        logger.info(f"🆕 Создан текстовый канал: {self.channel.name} ({self.channel.id})")
 
     async def add_member(self, member: discord.Member):
         if member in self.members:
@@ -154,6 +159,13 @@ class Lobby:
 
             await self.start_draft()
 
+            await asyncio.sleep(1200)  # Ждём 20 минут
+
+            await self.channel.send(
+                "⚔ Капитаны, подтвердите победу, нажав на кнопку ниже:",
+                view=WinButtonView(self)
+            )
+
         except Exception as e:
             logger.error(f"Ошибка при закрытии лобби: {e}")
 
@@ -163,6 +175,45 @@ class Lobby:
             await draft.start()
         except Exception as e:
             logger.error(f"Ошибка при старте драфта: {e}")
+
+
+
+    async def register_win(self, interaction: discord.Interaction, team: int):
+        if interaction.user not in self.captains:
+            await interaction.response.send_message("❌ Только капитан может подтвердить победу!", ephemeral=True)
+            return
+
+        if getattr(self, 'victory_registered', False):
+            await interaction.response.send_message("❌ Победа уже зафиксирована ранее.", ephemeral=True)
+            return
+
+        self.victory_registered = True
+
+        if team == 1:
+            winners = [self.captains[0]] + await self.get_team_members(1)
+        else:
+            winners = [self.captains[1]] + await self.get_team_members(2)
+
+        for player in winners:
+            await database.add_win(player.id)
+
+        await interaction.response.send_message("✅ Победа зафиксирована! Канал удалится через 2 минуты.",
+                                                ephemeral=True)
+        logger.info(f"✅ Победа команды {team} зафиксирована. Ждём 2 минуты перед удалением канала.")
+
+        # Ждём 2 минуты
+        await asyncio.sleep(120)
+
+        try:
+            await self.channel.delete(reason="Лобби завершено и победа зафиксирована.")
+        except Exception as e:
+            logger.error(f"❌ Ошибка при удалении текстового канала: {e}")
+
+    async def get_team_members(self, team_number: int):
+        if team_number == 1:
+            return [self.captains[0]] + self.teams[0]
+        else:
+            return [self.captains[1]] + self.teams[1]
 
 
 class CreateLobbyButton(View):
@@ -211,6 +262,19 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
             ephemeral=True
         )
         await self.lobby.add_member(interaction.user)
+
+class WinButtonView(discord.ui.View):
+    def __init__(self, lobby):
+        super().__init__(timeout=None)
+        self.lobby = lobby
+
+    @discord.ui.button(label="Победа команды ♦", style=discord.ButtonStyle.red)
+    async def win_team_1(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.lobby.register_win(interaction, team=1)
+
+    @discord.ui.button(label="Победа команды ♣", style=discord.ButtonStyle.blurple)
+    async def win_team_2(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.lobby.register_win(interaction, team=2)
 
 
 
