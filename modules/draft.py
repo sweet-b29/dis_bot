@@ -263,7 +263,7 @@ class SideSelectView(discord.ui.View):
             await interaction.response.send_message("❌ Только капитан может выбирать сторону!", ephemeral=True)
             return
 
-        other_side = "Защиту" if chosen_side == "Атаку" else "Атаку"
+        other_side = "Защита" if chosen_side == "Атака" else "Атака"
         team_1 = self.captain
         team_2 = self.draft.captains[1] if self.draft.captains[0] == team_1 else self.draft.captains[0]
 
