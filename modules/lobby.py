@@ -1,11 +1,12 @@
 import discord
 from discord.ext import commands
-from discord.ui import View, Button
+from discord.ui import View, Button, Modal, TextInput, Select
 import random
-from modules.draft import Draft
+from modules import database
+from modules.draft import Draft, format_player_name
 from loguru import logger
 
-MAX_PLAYERS = 10 # Измените при необходимости
+MAX_PLAYERS = 3 # Измените при необходимости
 
 
 
@@ -16,8 +17,16 @@ class JoinLobbyButton(View):
 
     @discord.ui.button(label="Присоединиться к лобби", style=discord.ButtonStyle.success)
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        await self.lobby.add_member(interaction.user)
+        profile = await database.get_player_profile(interaction.user.id)
+
+        if profile is None:
+            # Показываем модалку, если профиля нет
+            modal = PlayerProfileModal(self.lobby, interaction)
+            await interaction.response.send_modal(modal)
+        else:
+            # Профиль уже есть — сразу добавляем в лобби
+            await interaction.response.defer()
+            await self.lobby.add_member(interaction.user)
 
         try:
             await interaction.message.edit(
@@ -119,8 +128,26 @@ class Lobby:
                 color=discord.Color.red()
             )
 
-            embed.add_field(name="⚔ Капитаны выбраны",
-                            value=f"♦ {self.captains[0].mention}\n♣ {self.captains[1].mention}", inline=False)
+            captain_1_info = await format_player_name(self.captains[0])
+            captain_2_info = await format_player_name(self.captains[1])
+
+            embed.add_field(
+                name="⚔ Капитаны выбраны",
+                value=f"♦ {captain_1_info}\n♣ {captain_2_info}",
+                inline=False
+            )
+            # Список всех участников лобби
+            players_info = []
+            for member in self.members:
+                info = await format_player_name(member)
+                players_info.append(f"- {info}")
+
+            embed.add_field(
+                name="🎮 Игроки в лобби",
+                value="\n".join(players_info),
+                inline=False
+            )
+
             embed.set_footer(text="Переходим к драфту игроков...")
 
             await self.channel.send(embed=embed)
@@ -150,6 +177,42 @@ class CreateLobbyButton(View):
         category_id = 1364267777384517816  # Указать ID нужной категории
         lobby_instance = Lobby(interaction.guild, category_id)
         await lobby_instance.create_channel()
+
+
+class PlayerProfileModal(discord.ui.Modal, title="Введите данные профиля"):
+    username = discord.ui.TextInput(label="Ваш ник в игре", placeholder="Например: ilyuhaa", max_length=32)
+    rank = discord.ui.TextInput(label="Ваш ранг", placeholder="Например: Immortal", max_length=32)
+
+    def __init__(self, lobby, interaction):
+        super().__init__()
+        self.lobby = lobby
+        self.interaction = interaction
+
+    async def on_submit(self, interaction: discord.Interaction):
+        valid_ranks = [
+            "Iron", "Bronze", "Silver", "Gold",
+            "Platinum", "Diamond", "Ascendant", "Immortal", "Radiant"
+        ]
+
+        input_rank = str(self.rank).strip().capitalize()
+
+        if input_rank not in valid_ranks:
+            await interaction.response.send_message(
+                "❌ Неверный ранг. Пожалуйста, введите правильный ранг из списка:\n"
+                "Iron, Bronze, Silver, Gold, Platinum, Diamond, Ascendant, Immortal, Radiant",
+                ephemeral=True
+            )
+            return
+
+        await database.save_player_profile(interaction.user.id, str(self.username.value), input_rank)
+
+        await interaction.response.send_message(
+            f"✅ Ваш профиль сохранён!\n**Ник:** {self.username.value}\n**Ранг:** {input_rank}",
+            ephemeral=True
+        )
+        await self.lobby.add_member(interaction.user)
+
+
 
 
 def setup(bot: commands.Bot):

@@ -3,7 +3,6 @@ from discord.ext import commands
 from modules import lobby, draft, rating, database
 from loguru import logger
 from modules.lobby import CreateLobbyButton
-# from modules import modal
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -54,7 +53,7 @@ async def on_voice_state_update(member, before, after):
     if before.channel and before.channel != after.channel:
         vc = before.channel
 
-        # Проверка: канал пуст + это кастомный канал (начинается с спецсимволов)
+        # Проверка: канал пуст или нет
         if len(vc.members) == 0 and any(vc.name.startswith(prefix) for prefix in ("♦", "♣")):
             try:
                 await vc.delete(reason="Все участники покинули канал.")

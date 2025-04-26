@@ -3,8 +3,17 @@ from loguru import logger
 import os
 from discord import File, Embed
 import random
+from modules import database
 
-MAX_PLAYERS = 10  # Измените при необходимости
+MAX_PLAYERS = 3  # Измените при необходимости
+
+async def format_player_name(member: discord.Member) -> str:
+    profile = await database.get_player_profile(member.id)
+    if profile:
+        return f"{member.mention} - {profile['username']} ({profile['rank']})"
+    else:
+        return f"{member.mention}"
+
 
 class Draft:
     def __init__(self, guild, channel, captains, players):
@@ -68,8 +77,8 @@ class Draft:
             color=discord.Color.green()
         )
 
-        t1 = [m.mention for m in [self.captains[0]] + self.teams[self.captains[0]]]
-        t2 = [m.mention for m in [self.captains[1]] + self.teams[self.captains[1]]]
+        t1 = [await format_player_name(m) for m in [self.captains[0]] + self.teams[self.captains[0]]]
+        t2 = [await format_player_name(m) for m in [self.captains[1]] + self.teams[self.captains[1]]]
 
         embed.add_field(name=f"♦ {self.captains[0].display_name}", value="\n".join(t1), inline=True)
         embed.add_field(name=f"♣ {self.captains[1].display_name}", value="\n".join(t2), inline=True)
@@ -154,8 +163,8 @@ class Draft:
         file_path = f"modules/maps/{map_name}.webp"
         team_1 = self.captains[0]
         team_2 = self.captains[1]
-        side_1 = self.team_sides[team_1]
-        side_2 = self.team_sides[team_2]
+        side_1 = self.team_sides[self.captains[0]]
+        side_2 = self.team_sides[self.captains[1]]
 
         file = File(file_path, filename="map.webp")
         embed = Embed(
@@ -186,6 +195,7 @@ class DraftView(discord.ui.View):
 
 class PlayerButton(discord.ui.Button):
     def __init__(self, draft, player):
+        # Подгружаем профиль игрока
         super().__init__(label=player.display_name, style=discord.ButtonStyle.secondary)
         self.draft = draft
         self.player = player
