@@ -5,7 +5,7 @@ from discord import File, Embed
 import random
 from modules import database
 
-MAX_PLAYERS = 3  # Измените при необходимости
+MAX_PLAYERS = 10  # Измените при необходимости
 
 async def format_player_name(member: discord.Member) -> str:
     profile = await database.get_player_profile(member.id)
