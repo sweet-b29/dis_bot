@@ -6,7 +6,7 @@ from modules import database
 from modules.draft import Draft, format_player_name
 from loguru import logger
 
-MAX_PLAYERS = 3 # Измените при необходимости
+MAX_PLAYERS = 10 # Измените при необходимости
 
 
 
