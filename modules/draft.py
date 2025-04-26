@@ -80,6 +80,7 @@ class Draft:
         await self.send_map_embed()
 
     async def start_map_draft(self):
+        self.current_captain = self.captains[1]
         embed = discord.Embed(
             title="🌍 Драфт карт начался!",
             description=f"Капитан {self.current_captain.mention}, выберите карту для бана.",
@@ -90,7 +91,8 @@ class Draft:
         logger.info("Начался драфт карт.")
 
     async def choose_sides(self):
-        captain = self.captains[0]  # Капитан первой команды выбирает
+        self.current_captain = self.captains[0]
+        captain = self.current_captain
         view = SideSelectView(self, captain)
 
         embed = discord.Embed(
@@ -192,6 +194,7 @@ class PlayerButton(discord.ui.Button):
         if interaction.user != self.draft.current_captain:
             await interaction.response.send_message("❌ Сейчас не ваш ход выбирать.", ephemeral=True)
             return
+        await self.draft.pick_player(interaction, self.player)
 
 
 class MapDraftView(discord.ui.View):
