@@ -272,11 +272,16 @@ class SideSelectView(discord.ui.View):
             team_2: other_side
         }
 
+        side_cases = {
+            "Атака": "Атаку",
+            "Защита": "Защиту"
+        }
+
         embed = discord.Embed(
             title="✅ Выбор сторон завершён!",
             description=(
-                f"**{team_1.display_name}** играет за **♦ {chosen_side}**\n"
-                f"**{team_2.display_name}** играет за **♣ {other_side}**"
+            f"**Команда {team_1.display_name}** играет за **{side_cases[chosen_side]}**\n"
+            f"**Команда {team_2.display_name}** играет за **{side_cases[other_side]}**"
             ),
             color=discord.Color.green()
         )
