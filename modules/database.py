@@ -40,8 +40,8 @@ async def add_win(user_id: int):
     try:
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow("""
-                INSERT INTO ratings(username, wins) VALUES($1, 1)
-                ON CONFLICT (username) DO UPDATE SET wins = ratings.wins + 1
+                INSERT INTO ratings(user_id, wins) VALUES($1, 1)
+                ON CONFLICT (user_id) DO UPDATE SET wins = ratings.wins + 1
                 RETURNING wins;
             """, user_id)
         logger.info(f"✅ Победа добавлена пользователю {user_id}. Всего побед: {row['wins']}")
