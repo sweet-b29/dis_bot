@@ -43,6 +43,25 @@ class JoinLobbyButton(View):
             except discord.NotFound:
                 logger.warning(f"⚠ Interaction от {interaction.user} полностью истёк.")
 
+    @discord.ui.button(label="Выйти из лобби", style=discord.ButtonStyle.danger)
+    async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user not in self.lobby.members:
+            await interaction.response.send_message("❗️ Вы не в лобби.", ephemeral=True)
+            return
+
+        self.lobby.members.remove(interaction.user)
+        await interaction.response.send_message("🚪 Вы покинули лобби.", ephemeral=True)
+
+        logger.info(f"🚪 Игрок вышел из лобби: {interaction.user.display_name}")
+
+        try:
+            await self.lobby.message.edit(
+                content=f"👥 Участники: {len(self.lobby.members)}/{MAX_PLAYERS}.",
+                view=self
+            )
+        except discord.NotFound:
+            pass
+
 
 class Lobby:
     count = 0
@@ -102,6 +121,7 @@ class Lobby:
         await self.channel.send(f"{member.mention} присоединился к лобби ({len(self.members)}/{MAX_PLAYERS})")
 
         if len(self.members) >= MAX_PLAYERS and not self.draft_started:
+            self.draft_started = True
             # Убирает кнопку совсем
             for item in self.view.children:
                 if isinstance(item, discord.ui.Button):
@@ -225,7 +245,7 @@ class CreateLobbyButton(View):
     async def create_lobby_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
 
-        category_id = 1364267777384517816  # Указать ID нужной категории
+        category_id = 1321649371837759499  # Указать ID нужной категории
         lobby_instance = Lobby(interaction.guild, category_id)
         await lobby_instance.create_channel()
 

@@ -263,7 +263,7 @@ class SideSelectView(discord.ui.View):
             await interaction.response.send_message("❌ Только капитан может выбирать сторону!", ephemeral=True)
             return
 
-        other_side = "Защиту" if chosen_side == "Атаку" else "Атаку"
+        other_side = "Защита" if chosen_side == "Атака" else "Атака"
         team_1 = self.captain
         team_2 = self.draft.captains[1] if self.draft.captains[0] == team_1 else self.draft.captains[0]
 
@@ -272,11 +272,16 @@ class SideSelectView(discord.ui.View):
             team_2: other_side
         }
 
+        side_cases = {
+            "Атака": "Атаку",
+            "Защита": "Защиту"
+        }
+
         embed = discord.Embed(
             title="✅ Выбор сторон завершён!",
             description=(
-                f"**{team_1.display_name}** играет за **♦ {chosen_side}**\n"
-                f"**{team_2.display_name}** играет за **♣ {other_side}**"
+            f"**Команда {team_1.display_name}** играет за **{side_cases[chosen_side]}**\n"
+            f"**Команда {team_2.display_name}** играет за **{side_cases[other_side]}**"
             ),
             color=discord.Color.green()
         )
