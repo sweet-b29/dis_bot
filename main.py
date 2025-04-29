@@ -1,4 +1,5 @@
 import discord, os
+import logging
 from discord.ext import commands
 from modules import lobby, draft, rating, database
 from loguru import logger
@@ -74,6 +75,9 @@ async def delete_empty_vc(ctx):
                 deleted_channels.append(vc.name)
             except Exception as e:
                 await ctx.send(f"❌ Ошибка при удалении {vc.name}: {e}")
+
+
+logging.getLogger("discord.gateway").setLevel(logging.WARNING)
 
 
 

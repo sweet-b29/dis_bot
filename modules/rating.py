@@ -20,7 +20,7 @@ def setup(bot):
         for idx, row in enumerate(top10):
             user = ctx.guild.get_member(row["user_id"])
             if user:
-                name = user.display_name
+                name = f"{user.mention} — {user.display_name}"
             else:
                 name = f"ID: {row['user_id']}"
 
@@ -31,4 +31,5 @@ def setup(bot):
             description=description,
             color=discord.Color.gold()
         )
+        embed.set_image(url="blob:https://www.pinterest.com/91e98a68-3f6b-463e-9652-355b28ff2b99")
         await ctx.send(embed=embed)
