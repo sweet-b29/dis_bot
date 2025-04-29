@@ -31,5 +31,5 @@ def setup(bot):
             description=description,
             color=discord.Color.gold()
         )
-        embed.set_image(url="blob:https://www.pinterest.com/91e98a68-3f6b-463e-9652-355b28ff2b99")
+        embed.set_image(url="https://i.pinimg.com/736x/df/c4/ba/dfc4bae602ee1aec9c39bdf01bf888eb.jpg")
         await ctx.send(embed=embed)
