@@ -210,9 +210,9 @@ class Lobby:
         self.victory_registered = True
 
         if team == 1:
-            winners = [self.captains[0]] + await self.get_team_members(1)
+            winners = await self.get_team_members(1)
         else:
-            winners = [self.captains[1]] + await self.get_team_members(2)
+            winners = await self.get_team_members(2)
 
         for player in winners:
             await database.add_win(player.id)
