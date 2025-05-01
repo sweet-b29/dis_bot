@@ -136,9 +136,9 @@ class Draft:
                 if member.voice:
                     try:
                         await member.move_to(vc)
-                        logger.info(f"🔁 Переместил {member.user_id} в голосовой канал {vc.name}")
+                        logger.info(f"🔁 Переместил {member.display_name} в голосовой канал {vc.name}")
                     except Exception as e:
-                        logger.warning(f"⚠ Не удалось переместить {member.user_id}: {e}")
+                        logger.warning(f"⚠ Не удалось переместить {member.display_name}: {e}")
 
             self.voice_channels.append(vc)
 
