@@ -191,8 +191,8 @@ class Lobby:
 
     async def start_draft(self):
         try:
-            draft = Draft(self.guild, self.channel, self.captains, self.members)
-            await draft.start()
+            self.draft = Draft(self.guild, self.channel, self.captains, self.members)
+            await self.draft.start()
         except Exception as e:
             logger.error(f"Ошибка при старте драфта: {e}")
 
@@ -209,10 +209,13 @@ class Lobby:
 
         self.victory_registered = True
 
-        if team == 1:
-            winners = await self.get_team_members(1)
-        else:
-            winners = await self.get_team_members(2)
+        winning_captain = self.captains[0] if team == 1 else self.captains[1]
+
+        winners = []
+        for cap, members in self.draft.teams.items():
+            if cap.id == winning_captain.id:
+                winners = [cap] + members
+                break
 
         for player in winners:
             await database.add_win(player.id)

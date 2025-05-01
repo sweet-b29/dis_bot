@@ -136,9 +136,9 @@ class Draft:
                 if member.voice:
                     try:
                         await member.move_to(vc)
-                        logger.info(f"🔁 Переместил {member.display_name} в голосовой канал {vc.name}")
+                        logger.info(f"🔁 Переместил {member.user_id} в голосовой канал {vc.name}")
                     except Exception as e:
-                        logger.warning(f"⚠ Не удалось переместить {member.display_name}: {e}")
+                        logger.warning(f"⚠ Не удалось переместить {member.user_id}: {e}")
 
             self.voice_channels.append(vc)
 
@@ -163,8 +163,8 @@ class Draft:
         file_path = f"modules/maps/{map_name}.webp"
         team_1 = self.captains[0]
         team_2 = self.captains[1]
-        side_1 = self.team_sides[self.captains[0]]
-        side_2 = self.team_sides[self.captains[1]]
+        side_1 = self.team_sides[self.captains[0].id]
+        side_2 = self.team_sides[self.captains[1].id]
 
         file = File(file_path, filename="map.webp")
         embed = Embed(
@@ -268,8 +268,8 @@ class SideSelectView(discord.ui.View):
         team_2 = self.draft.captains[1] if self.draft.captains[0] == team_1 else self.draft.captains[0]
 
         self.draft.team_sides = {
-            team_1: chosen_side,
-            team_2: other_side
+            team_1.id: chosen_side,
+            team_2.id: other_side
         }
 
         side_cases = {
