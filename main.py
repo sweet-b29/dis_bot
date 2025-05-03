@@ -1,7 +1,7 @@
 import discord, os
 import logging
 from discord.ext import commands
-from modules import lobby, draft, rating, database
+from modules import lobby, draft, rating, database, admin
 from loguru import logger
 from modules.lobby import CreateLobbyButton
 from dotenv import load_dotenv
@@ -89,6 +89,7 @@ if not TOKEN:
 lobby.setup(bot)
 draft.setup(bot)
 rating.setup(bot)
+admin.setup(bot)
 
 # Запуск бота
 try:
