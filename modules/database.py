@@ -30,6 +30,11 @@ async def init_db():
                     rank TEXT NOT NULL
                 )
             """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS blacklist (
+                    user_id BIGINT PRIMARY KEY
+                );
+            """)
 
         logger.success("✅ База данных инициализирована.")
     except Exception as e:
@@ -83,16 +88,20 @@ async def get_player_profile(user_id: int):
     return await db_pool.fetchrow(query, user_id)
 
 
+async def set_wins(user_id: int, wins: int):
+    await db_pool.execute("""
+        INSERT INTO ratings (user_id, wins)
+        VALUES ($1, $2)
+        ON CONFLICT (user_id) DO UPDATE SET wins = EXCLUDED.wins
+    """, user_id, wins)
 
-# async def get_game_nickname(user_id: int):
-#     query = "SELECT game_nickname FROM players WHERE user_id = $1"
-#     return await db_pool.fetchval(query, user_id)
-#
-# async def save_game_nickname(user_id: int, nickname: str):
-#     query = """
-#         INSERT INTO players (user_id, game_nickname)
-#         VALUES ($1, $2)
-#         ON CONFLICT (user_id) DO UPDATE SET game_nickname = EXCLUDED.game_nickname
-#     """
-#     await db_pool.execute(query, user_id, nickname)
+
+async def get_all_profiles_with_wins():
+    return await db_pool.fetch("""
+        SELECT p.user_id, p.username, p.rank, COALESCE(r.wins, 0) AS wins
+        FROM player_profiles p
+        LEFT JOIN ratings r ON p.user_id = r.user_id
+        ORDER BY wins DESC
+    """)
+
 
