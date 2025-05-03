@@ -291,13 +291,22 @@ class WinButtonView(discord.ui.View):
         super().__init__(timeout=None)
         self.lobby = lobby
 
-    @discord.ui.button(label="Победа команды ♦", style=discord.ButtonStyle.red)
-    async def win_team_1(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.lobby.register_win(interaction, team=1)
+        captain_1 = lobby.captains[0].display_name
+        captain_2 = lobby.captains[1].display_name
 
-    @discord.ui.button(label="Победа команды ♣", style=discord.ButtonStyle.blurple)
-    async def win_team_2(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.lobby.register_win(interaction, team=2)
+        self.add_item(WinButton(label=f"Победа команды {captain_1}", style=discord.ButtonStyle.red, team=1, lobby=lobby))
+        self.add_item(WinButton(label=f"Победа команды {captain_2}", style=discord.ButtonStyle.blurple, team=2, lobby=lobby))
+
+
+class WinButton(discord.ui.Button):
+    def __init__(self, label: str, style: discord.ButtonStyle, team: int, lobby):
+        super().__init__(label=label, style=style)
+        self.team = team
+        self.lobby = lobby
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.lobby.register_win(interaction, team=self.team)
+
 
 
 
