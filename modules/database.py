@@ -30,11 +30,6 @@ async def init_db():
                     rank TEXT NOT NULL
                 )
             """)
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS blacklist (
-                    user_id BIGINT PRIMARY KEY
-                );
-            """)
 
         logger.success("✅ База данных инициализирована.")
     except Exception as e:
