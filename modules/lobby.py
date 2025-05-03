@@ -199,12 +199,14 @@ class Lobby:
 
 
     async def register_win(self, interaction: discord.Interaction, team: int):
+        await interaction.response.defer(ephemeral=True)
+        
         if interaction.user not in self.captains:
-            await interaction.response.send_message("❌ Только капитан может подтвердить победу!", ephemeral=True)
+            await interaction.followup.send("❌ Только капитан может подтвердить победу!", ephemeral=True)
             return
 
         if getattr(self, 'victory_registered', False):
-            await interaction.response.send_message("❌ Победа уже зафиксирована ранее.", ephemeral=True)
+            await interaction.response.followup.send("❌ Победа уже зафиксирована ранее.", ephemeral=True)
             return
 
         self.victory_registered = True
@@ -220,7 +222,7 @@ class Lobby:
         for player in winners:
             await database.add_win(player.id)
 
-        await interaction.response.send_message("✅ Победа зафиксирована! Канал удалится через 2 минуты.",
+        await interaction.followup.send("✅ Победа зафиксирована! Канал удалится через 2 минуты.",
                                                 ephemeral=True)
         logger.info(f"✅ Победа команды {team} зафиксирована. Ждём 2 минуты перед удалением канала.")
 
