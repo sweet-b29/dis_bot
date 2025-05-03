@@ -86,7 +86,6 @@ class Draft:
         await self.draft_message.edit(embed=embed, view=None)
         logger.info("Команды сформированы.")
         await self.start_map_draft()
-        await self.send_map_embed()
 
     async def start_map_draft(self):
         self.current_captain = self.captains[1]
