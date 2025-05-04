@@ -29,5 +29,5 @@ def setup(bot):
             description=description,
             color=discord.Color.gold()
         )
-        embed.set_image(url="https://i.pinimg.com/736x/df/c4/ba/dfc4bae602ee1aec9c39bdf01bf888eb.jpg")
+        embed.set_image(url="https://i.pinimg.com/736x/b2/b6/35/b2b6350611819ed27eaef3b72e7045da.jpg")
         await ctx.send(embed=embed)

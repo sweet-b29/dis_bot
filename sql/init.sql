@@ -8,4 +8,3 @@ CREATE TABLE IF NOT EXISTS player_profiles (
     username TEXT NOT NULL,
     rank TEXT NOT NULL
 );
-

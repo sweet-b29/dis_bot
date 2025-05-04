@@ -53,8 +53,8 @@ async def add_win(user_id: int):
     try:
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow("""
-                INSERT INTO ratings(username, wins) VALUES($1, 1)
-                ON CONFLICT (username) DO UPDATE SET wins = ratings.wins + 1
+                INSERT INTO ratings(user_id, wins) VALUES($1, 1)
+                ON CONFLICT (user_id) DO UPDATE SET wins = ratings.wins + 1
                 RETURNING wins;
             """, user_id)
         logger.info(f"✅ Победа добавлена пользователю {user_id}. Всего побед: {row['wins']}")
@@ -107,6 +107,22 @@ async def save_lobby(channel_id: int, captain_1_id: int, captain_2_id: int):
     row = await db_pool.fetchrow(query, channel_id, captain_1_id, captain_2_id)
     return row['lobby_id']
 
+async def set_wins(user_id: int, wins: int):
+    await db_pool.execute("""
+        INSERT INTO ratings (user_id, wins)
+        VALUES ($1, $2)
+        ON CONFLICT (user_id) DO UPDATE SET wins = EXCLUDED.wins
+    """, user_id, wins)
+
+
+async def get_all_profiles_with_wins():
+    return await db_pool.fetch("""
+        SELECT p.user_id, p.username, p.rank, COALESCE(r.wins, 0) AS wins
+        FROM player_profiles p
+        LEFT JOIN ratings r ON p.user_id = r.user_id
+        ORDER BY wins DESC
+    """)
+
 
 async def update_lobby(lobby_id: int, team_1: list[int], team_2: list[int], winner_team: int = None):
     query = """
@@ -118,4 +134,5 @@ async def update_lobby(lobby_id: int, team_1: list[int], team_2: list[int], winn
         WHERE lobby_id = $4;
     """
     await db_pool.execute(query, ",".join(map(str, team_1)), ",".join(map(str, team_2)), winner_team, lobby_id)
+
 
