@@ -30,6 +30,19 @@ async def init_db():
                     rank TEXT NOT NULL
                 )
             """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS lobbies (
+                    lobby_id SERIAL PRIMARY KEY,
+                    channel_id BIGINT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    closed_at TIMESTAMP,
+                    captain_1_id BIGINT,
+                    captain_2_id BIGINT,
+                    team_1 TEXT,
+                    team_2 TEXT,
+                    winner_team INT
+                );
+            """)
 
         logger.success("✅ База данных инициализирована.")
     except Exception as e:
@@ -55,8 +68,11 @@ async def get_top10():
     try:
         async with db_pool.acquire() as conn:
             rows = await conn.fetch("""
-                SELECT user_id, wins FROM ratings
-                ORDER BY wins DESC LIMIT 10;
+                SELECT r.user_id, r.wins, p.username
+                FROM ratings r
+                LEFT JOIN player_profiles p ON r.user_id = p.user_id
+                ORDER BY r.wins DESC
+                LIMIT 10;
             """)
         return rows
     except Exception as e:
@@ -82,17 +98,24 @@ async def get_player_profile(user_id: int):
     query = "SELECT username, rank FROM player_profiles WHERE user_id = $1"
     return await db_pool.fetchrow(query, user_id)
 
+async def save_lobby(channel_id: int, captain_1_id: int, captain_2_id: int):
+    query = """
+        INSERT INTO lobbies (channel_id, captain_1_id, captain_2_id)
+        VALUES ($1, $2, $3)
+        RETURNING lobby_id;
+    """
+    row = await db_pool.fetchrow(query, channel_id, captain_1_id, captain_2_id)
+    return row['lobby_id']
 
 
-# async def get_game_nickname(user_id: int):
-#     query = "SELECT game_nickname FROM players WHERE user_id = $1"
-#     return await db_pool.fetchval(query, user_id)
-#
-# async def save_game_nickname(user_id: int, nickname: str):
-#     query = """
-#         INSERT INTO players (user_id, game_nickname)
-#         VALUES ($1, $2)
-#         ON CONFLICT (user_id) DO UPDATE SET game_nickname = EXCLUDED.game_nickname
-#     """
-#     await db_pool.execute(query, user_id, nickname)
+async def update_lobby(lobby_id: int, team_1: list[int], team_2: list[int], winner_team: int = None):
+    query = """
+        UPDATE lobbies
+        SET closed_at = NOW(),
+            team_1 = $1,
+            team_2 = $2,
+            winner_team = $3
+        WHERE lobby_id = $4;
+    """
+    await db_pool.execute(query, ",".join(map(str, team_1)), ",".join(map(str, team_2)), winner_team, lobby_id)
 

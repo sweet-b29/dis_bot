@@ -24,10 +24,11 @@ class JoinLobbyButton(View):
             # Показываем модалку, если профиля нет
             modal = PlayerProfileModal(self.lobby, interaction)
             await interaction.response.send_modal(modal)
-        else:
-            # Профиль уже есть — сразу добавляем в лобби
-            await interaction.response.defer()
-            await self.lobby.add_member(interaction.user)
+            return
+
+        # Профиль уже есть — сразу добавляем в лобби
+        await interaction.response.defer(ephemeral=True)
+        await self.lobby.add_member(interaction.user)
 
         try:
             await interaction.message.edit(
@@ -35,6 +36,7 @@ class JoinLobbyButton(View):
                 view=self
             )
         except discord.NotFound:
+            logger.warning("⚠ Сообщение не найдено при попытке обновления (возможно, канал уже удалён).")
             try:
                 await interaction.followup.send(
                     content=f"{interaction.user.mention}, вы присоединились к лобби!",
@@ -67,6 +69,7 @@ class Lobby:
     count = 0
 
     def __init__(self, guild: discord.Guild, category_id: int):
+        self.lobby_id = None
         self.message = None
         self.view = None
         Lobby.count += 1
@@ -137,6 +140,12 @@ class Lobby:
             # Выбор капитанов
             self.captains = random.sample(self.members, 2)
 
+            self.lobby_id = await database.save_lobby(
+                channel_id=self.channel.id,
+                captain_1_id=self.captains[0].id,
+                captain_2_id=self.captains[1].id
+            )
+
             # Обновление прав в канале
             overwrites = {
                 self.guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False),
@@ -179,7 +188,7 @@ class Lobby:
 
             await self.start_draft()
 
-            await asyncio.sleep(1200)  # Ждём 20 минут
+            # await asyncio.sleep(1200)  # Ждём 20 минут
 
             await self.channel.send(
                 "⚔ Капитаны, подтвердите победу, нажав на кнопку ниже:",
@@ -226,6 +235,20 @@ class Lobby:
 
         # Ждём 2 минуты
         await asyncio.sleep(120)
+
+        # Обновляем запись о лобби в БД
+        try:
+            team_1_ids = [p.id for p in [self.captains[0]] + self.draft.teams.get(self.captains[0], [])]
+            team_2_ids = [p.id for p in [self.captains[1]] + self.draft.teams.get(self.captains[1], [])]
+
+            await database.update_lobby(
+                lobby_id=self.lobby_id,
+                team_1=team_1_ids,
+                team_2=team_2_ids,
+                winner_team=team
+            )
+        except Exception as e:
+            logger.error(f"❌ Ошибка при обновлении записи лобби: {e}")
 
         try:
             await self.channel.delete(reason="Лобби завершено и победа зафиксирована.")
