@@ -115,11 +115,23 @@ class Draft:
         teams = [self.teams[self.captains[0]], self.teams[self.captains[1]]]
         names = [f"♦︎ {self.captains[0].display_name}", f"♣︎ {self.captains[1].display_name}"]
 
+
+
         for idx, (team_members, name) in enumerate(zip(teams, names)):
             overwrites = {
                 self.guild.default_role: discord.PermissionOverwrite(connect=False),
                 self.guild.me: discord.PermissionOverwrite(connect=True, speak=True),
+
             }
+
+            mod_role = discord.utils.get(self.guild.roles, id=1337161337071079556)
+            if mod_role:
+                overwrites[mod_role] = discord.PermissionOverwrite(
+                    connect=True,
+                    speak=True,
+                    move_members=True,
+                    view_channel=True
+                )
 
             for member in team_members + [self.captains[idx]]:
                 overwrites[member] = discord.PermissionOverwrite(connect=True, speak=True)

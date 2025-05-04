@@ -19,12 +19,10 @@ def setup(bot):
 
         for idx, row in enumerate(top10):
             user = ctx.guild.get_member(row["user_id"])
-            if user:
-                name = f"{user.mention} — {user.display_name}"
-            else:
-                name = f"ID: {row['user_id']}"
+            mention = user.mention if user else f"ID: {row['user_id']}"
+            username = row["username"] if row["username"] else "❓"
 
-            description += f"{medals[idx]} {idx + 1}. **{name}** — {row['wins']} побед\n"
+            description += f"{medals[idx]} {mention} — **{username}** — 🏆 {row['wins']} побед\n"
 
         embed = Embed(
             title="🏆 Топ-10 игроков по победам",
