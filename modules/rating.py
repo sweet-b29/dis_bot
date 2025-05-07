@@ -43,5 +43,3 @@ class Rating(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Rating(bot))
-        embed.set_image(url="https://i.pinimg.com/736x/b2/b6/35/b2b6350611819ed27eaef3b72e7045da.jpg")
-        await ctx.send(embed=embed)
