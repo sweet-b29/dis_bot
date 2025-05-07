@@ -1,19 +1,17 @@
 import discord, os
 import logging
 from discord.ext import commands
-from modules import lobby, draft, rating, database, admin
+from modules import lobby, draft, rating, database
 from loguru import logger
 from modules.lobby import CreateLobbyButton
 from dotenv import load_dotenv
 load_dotenv()
 
-
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix='.', intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents)
 
 @bot.event
 async def on_ready():
@@ -63,22 +61,7 @@ async def on_voice_state_update(member, before, after):
                 logger.warning(f"❌ Не удалось удалить голосовой канал {vc.name}: {e}")
 
 
-
-@bot.command(name='delete_empty_vc')
-@commands.has_permissions(manage_channels=True)
-async def delete_empty_vc(ctx):
-    deleted_channels = []
-    for vc in ctx.guild.voice_channels:
-        if any(tag in vc.name for tag in ("♦", "♣", "Команда")) and len(vc.members) == 0:
-            try:
-                await vc.delete(reason="Ручная очистка пустых голосовых каналов")
-                deleted_channels.append(vc.name)
-            except Exception as e:
-                await ctx.send(f"❌ Ошибка при удалении {vc.name}: {e}")
-
-
 logging.getLogger("discord.gateway").setLevel(logging.WARNING)
-
 
 
 # Проверяем наличие токена перед запуском
@@ -88,11 +71,16 @@ if not TOKEN:
 # Настройка модулей
 lobby.setup(bot)
 draft.setup(bot)
-rating.setup(bot)
-admin.setup(bot)
 
 # Запуск бота
 try:
+    @bot.event
+    async def setup_hook():
+        await bot.load_extension("modules.rating")
+        await bot.load_extension("modules.admin")
+        await bot.tree.sync()
+        logger.success("✅ Slash-команды синхронизированы с Discord API.")
+
     bot.run(TOKEN)
 except discord.LoginFailure:
     logger.error("❌ Неверный токен Discord. Проверьте .env файл.")

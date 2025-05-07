@@ -1,8 +1,6 @@
 import discord
 from loguru import logger
-import os
 from discord import File, Embed
-import random
 from modules import database
 
 MAX_PLAYERS = 3  # Измените при необходимости
