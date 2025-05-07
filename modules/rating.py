@@ -25,7 +25,7 @@ class Rating(commands.Cog):
                 name = f"{user.mention} — {user.display_name}"
             else:
                 name = f"ID: {row['user_id']}"
-            user = ctx.guild.get_member(row["user_id"])
+            user = interaction.guild.get_member(row["user_id"])
             mention = user.mention if user else f"ID: {row['user_id']}"
             username = row["username"] if row["username"] else "❓"
 
