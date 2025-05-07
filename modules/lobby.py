@@ -7,7 +7,7 @@ from modules.draft import Draft, format_player_name
 from loguru import logger
 import asyncio
 
-MAX_PLAYERS = 3 # Измените при необходимости
+MAX_PLAYERS = 10 # Измените при необходимости
 
 
 
@@ -24,10 +24,11 @@ class JoinLobbyButton(View):
             # Показываем модалку, если профиля нет
             modal = PlayerProfileModal(self.lobby, interaction)
             await interaction.response.send_modal(modal)
-        else:
-            # Профиль уже есть — сразу добавляем в лобби
-            await interaction.response.defer()
-            await self.lobby.add_member(interaction.user)
+            return
+
+        # Профиль уже есть — сразу добавляем в лобби
+        await interaction.response.defer(ephemeral=True)
+        await self.lobby.add_member(interaction.user)
 
         try:
             await interaction.message.edit(
@@ -35,6 +36,7 @@ class JoinLobbyButton(View):
                 view=self
             )
         except discord.NotFound:
+            logger.warning("⚠ Сообщение не найдено при попытке обновления (возможно, канал уже удалён).")
             try:
                 await interaction.followup.send(
                     content=f"{interaction.user.mention}, вы присоединились к лобби!",
@@ -67,6 +69,7 @@ class Lobby:
     count = 0
 
     def __init__(self, guild: discord.Guild, category_id: int):
+        self.lobby_id = None
         self.message = None
         self.view = None
         Lobby.count += 1
@@ -74,7 +77,7 @@ class Lobby:
         self.members: list[discord.Member] = []
         self.channel: discord.TextChannel | None = None
         self.category_id = category_id
-        self.name = f"◎︎лобби-{Lobby.count}"
+        self.name = f"◎lobby {Lobby.count}"
         self.captains: list[discord.Member] = []
         self.draft_started = False
         self.victory_registered = False
@@ -135,7 +138,41 @@ class Lobby:
 
         try:
             # Выбор капитанов
-            self.captains = random.sample(self.members, 2)
+            # Упорядочиваем всех игроков по рангу (по убыванию)
+            RANK_ORDER = {
+                "Radiant": 10,
+                "Immortal": 9,
+                "Ascendant": 8,
+                "Diamond": 7,
+                "Platinum": 6,
+                "Gold": 5,
+                "Silver": 4,
+                "Bronze": 3,
+                "Iron": 2,
+                "?": 1,
+                "Unranked": 0
+            }
+
+            player_profiles = []
+            for member in self.members:
+                profile = await database.get_player_profile(member.id)
+                rank = profile["rank"] if profile else "Unranked"
+                player_profiles.append((member, rank))
+
+            # Сортировка от сильного к слабому
+            player_profiles.sort(key=lambda x: RANK_ORDER.get(x[1], 0), reverse=True)
+
+            # Выбираем двух сильнейших как капитанов
+            self.captains = [player_profiles[0][0], player_profiles[1][0]]
+
+            # Обновляем self.members: оставшиеся игроки
+            self.members = [p[0] for p in player_profiles if p[0] not in self.captains]
+
+            self.lobby_id = await database.save_lobby(
+                channel_id=self.channel.id,
+                captain_1_id=self.captains[0].id,
+                captain_2_id=self.captains[1].id
+            )
 
             # Обновление прав в канале
             overwrites = {
@@ -199,12 +236,15 @@ class Lobby:
 
 
     async def register_win(self, interaction: discord.Interaction, team: int):
+        await interaction.response.defer(ephemeral=True)
+
         if interaction.user not in self.captains:
-            await interaction.response.send_message("❌ Только капитан может подтвердить победу!", ephemeral=True)
+            await interaction.followup.send("❌ Только капитан может подтвердить победу!", ephemeral=True)
             return
 
         if getattr(self, 'victory_registered', False):
-            await interaction.response.send_message("❌ Победа уже зафиксирована ранее.", ephemeral=True)
+            await interaction.response.followup.send("❌ Победа уже зафиксирована ранее.", ephemeral=True)
+            await interaction.followup.send("❌ Победа уже зафиксирована ранее.", ephemeral=True)
             return
 
         self.victory_registered = True
@@ -220,12 +260,26 @@ class Lobby:
         for player in winners:
             await database.add_win(player.id)
 
-        await interaction.response.send_message("✅ Победа зафиксирована! Канал удалится через 2 минуты.",
+        await interaction.followup.send("✅ Победа зафиксирована! Канал удалится через 2 минуты.",
                                                 ephemeral=True)
         logger.info(f"✅ Победа команды {team} зафиксирована. Ждём 2 минуты перед удалением канала.")
 
         # Ждём 2 минуты
         await asyncio.sleep(120)
+
+        # Обновляем запись о лобби в БД
+        try:
+            team_1_ids = [p.id for p in [self.captains[0]] + self.draft.teams.get(self.captains[0], [])]
+            team_2_ids = [p.id for p in [self.captains[1]] + self.draft.teams.get(self.captains[1], [])]
+
+            await database.update_lobby(
+                lobby_id=self.lobby_id,
+                team_1=team_1_ids,
+                team_2=team_2_ids,
+                winner_team=team
+            )
+        except Exception as e:
+            logger.error(f"❌ Ошибка при обновлении записи лобби: {e}")
 
         try:
             await self.channel.delete(reason="Лобби завершено и победа зафиксирована.")
@@ -254,8 +308,8 @@ class CreateLobbyButton(View):
 
 
 class PlayerProfileModal(discord.ui.Modal, title="Введите данные профиля"):
-    username = discord.ui.TextInput(label="Ваш ник в игре", placeholder="Например: ilyuhaa", max_length=32)
-    rank = discord.ui.TextInput(label="Ваш ранг", placeholder="Например: Immortal", max_length=32)
+    username = discord.ui.TextInput(label="Ваш ник в игре", placeholder="Например: sweet#b29", max_length=32)
+    rank = discord.ui.TextInput(label="Ваш актуальный ранг", placeholder="Например: Immortal", max_length=32)
 
     def __init__(self, lobby, interaction):
         super().__init__()
@@ -265,7 +319,8 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
     async def on_submit(self, interaction: discord.Interaction):
         valid_ranks = [
             "Iron", "Bronze", "Silver", "Gold",
-            "Platinum", "Diamond", "Ascendant", "Immortal", "Radiant"
+            "Platinum", "Diamond", "Ascendant", "Immortal", "Radiant",
+            "Unranked"
         ]
 
         input_rank = str(self.rank).strip().capitalize()
@@ -273,7 +328,7 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
         if input_rank not in valid_ranks:
             await interaction.response.send_message(
                 "❌ Неверный ранг. Пожалуйста, введите правильный ранг из списка:\n"
-                "Iron, Bronze, Silver, Gold, Platinum, Diamond, Ascendant, Immortal, Radiant",
+                "Iron, Bronze, Silver, Gold, Platinum, Diamond, Ascendant, Immortal, Radiant, Unranked",
                 ephemeral=True
             )
             return
@@ -291,13 +346,22 @@ class WinButtonView(discord.ui.View):
         super().__init__(timeout=None)
         self.lobby = lobby
 
-    @discord.ui.button(label="Победа команды ♦", style=discord.ButtonStyle.red)
-    async def win_team_1(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.lobby.register_win(interaction, team=1)
+        captain_1 = lobby.captains[0].display_name
+        captain_2 = lobby.captains[1].display_name
 
-    @discord.ui.button(label="Победа команды ♣", style=discord.ButtonStyle.blurple)
-    async def win_team_2(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.lobby.register_win(interaction, team=2)
+        self.add_item(WinButton(label=f"Победа команды {captain_1}", style=discord.ButtonStyle.red, team=1, lobby=lobby))
+        self.add_item(WinButton(label=f"Победа команды {captain_2}", style=discord.ButtonStyle.blurple, team=2, lobby=lobby))
+
+
+class WinButton(discord.ui.Button):
+    def __init__(self, label: str, style: discord.ButtonStyle, team: int, lobby):
+        super().__init__(label=label, style=style)
+        self.team = team
+        self.lobby = lobby
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.lobby.register_win(interaction, team=self.team)
+
 
 
 

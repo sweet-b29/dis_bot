@@ -3,7 +3,7 @@ from loguru import logger
 from discord import File, Embed
 from modules import database
 
-MAX_PLAYERS = 3  # Измените при необходимости
+MAX_PLAYERS = 10  # Измените при необходимости
 
 async def format_player_name(member: discord.Member) -> str:
     profile = await database.get_player_profile(member.id)
@@ -84,7 +84,6 @@ class Draft:
         await self.draft_message.edit(embed=embed, view=None)
         logger.info("Команды сформированы.")
         await self.start_map_draft()
-        await self.send_map_embed()
 
     async def start_map_draft(self):
         self.current_captain = self.captains[1]
@@ -114,11 +113,23 @@ class Draft:
         teams = [self.teams[self.captains[0]], self.teams[self.captains[1]]]
         names = [f"♦︎ {self.captains[0].display_name}", f"♣︎ {self.captains[1].display_name}"]
 
+
+
         for idx, (team_members, name) in enumerate(zip(teams, names)):
             overwrites = {
                 self.guild.default_role: discord.PermissionOverwrite(connect=False),
                 self.guild.me: discord.PermissionOverwrite(connect=True, speak=True),
+
             }
+
+            mod_role = discord.utils.get(self.guild.roles, id=1337161337071079556)
+            if mod_role:
+                overwrites[mod_role] = discord.PermissionOverwrite(
+                    connect=True,
+                    speak=True,
+                    move_members=True,
+                    view_channel=True
+                )
 
             for member in team_members + [self.captains[idx]]:
                 overwrites[member] = discord.PermissionOverwrite(connect=True, speak=True)

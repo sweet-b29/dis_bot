@@ -25,8 +25,11 @@ class Rating(commands.Cog):
                 name = f"{user.mention} — {user.display_name}"
             else:
                 name = f"ID: {row['user_id']}"
+            user = ctx.guild.get_member(row["user_id"])
+            mention = user.mention if user else f"ID: {row['user_id']}"
+            username = row["username"] if row["username"] else "❓"
 
-            description += f"{medals[idx]} {idx + 1}. **{name}** — {row['wins']} побед\n"
+            description += f"{medals[idx]} {mention} — **{username}** — 🏆 {row['wins']} побед\n"
 
         embed = Embed(
             title="🏆 Топ-10 игроков по победам",
@@ -40,3 +43,5 @@ class Rating(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Rating(bot))
+        embed.set_image(url="https://i.pinimg.com/736x/b2/b6/35/b2b6350611819ed27eaef3b72e7045da.jpg")
+        await ctx.send(embed=embed)
