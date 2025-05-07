@@ -77,7 +77,7 @@ class Lobby:
         self.members: list[discord.Member] = []
         self.channel: discord.TextChannel | None = None
         self.category_id = category_id
-        self.name = f"◎︎лобби-{Lobby.count}"
+        self.name = f"◎lobby {Lobby.count}"
         self.captains: list[discord.Member] = []
         self.draft_started = False
         self.victory_registered = False
@@ -138,7 +138,35 @@ class Lobby:
 
         try:
             # Выбор капитанов
-            self.captains = random.sample(self.members, 2)
+            # Упорядочиваем всех игроков по рангу (по убыванию)
+            RANK_ORDER = {
+                "Radiant": 10,
+                "Immortal": 9,
+                "Ascendant": 8,
+                "Diamond": 7,
+                "Platinum": 6,
+                "Gold": 5,
+                "Silver": 4,
+                "Bronze": 3,
+                "Iron": 2,
+                "?": 1,
+                "Unranked": 0
+            }
+
+            player_profiles = []
+            for member in self.members:
+                profile = await database.get_player_profile(member.id)
+                rank = profile["rank"] if profile else "Unranked"
+                player_profiles.append((member, rank))
+
+            # Сортировка от сильного к слабому
+            player_profiles.sort(key=lambda x: RANK_ORDER.get(x[1], 0), reverse=True)
+
+            # Выбираем двух сильнейших как капитанов
+            self.captains = [player_profiles[0][0], player_profiles[1][0]]
+
+            # Обновляем self.members: оставшиеся игроки
+            self.members = [p[0] for p in player_profiles if p[0] not in self.captains]
 
             self.lobby_id = await database.save_lobby(
                 channel_id=self.channel.id,
@@ -209,13 +237,14 @@ class Lobby:
 
     async def register_win(self, interaction: discord.Interaction, team: int):
         await interaction.response.defer(ephemeral=True)
-        
+
         if interaction.user not in self.captains:
             await interaction.followup.send("❌ Только капитан может подтвердить победу!", ephemeral=True)
             return
 
         if getattr(self, 'victory_registered', False):
             await interaction.response.followup.send("❌ Победа уже зафиксирована ранее.", ephemeral=True)
+            await interaction.followup.send("❌ Победа уже зафиксирована ранее.", ephemeral=True)
             return
 
         self.victory_registered = True
@@ -279,8 +308,8 @@ class CreateLobbyButton(View):
 
 
 class PlayerProfileModal(discord.ui.Modal, title="Введите данные профиля"):
-    username = discord.ui.TextInput(label="Ваш ник в игре", placeholder="Например: ilyuhaa", max_length=32)
-    rank = discord.ui.TextInput(label="Ваш ранг", placeholder="Например: Immortal", max_length=32)
+    username = discord.ui.TextInput(label="Ваш ник в игре", placeholder="Например: sweet#b29", max_length=32)
+    rank = discord.ui.TextInput(label="Ваш актуальный ранг", placeholder="Например: Immortal", max_length=32)
 
     def __init__(self, lobby, interaction):
         super().__init__()
@@ -290,7 +319,8 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
     async def on_submit(self, interaction: discord.Interaction):
         valid_ranks = [
             "Iron", "Bronze", "Silver", "Gold",
-            "Platinum", "Diamond", "Ascendant", "Immortal", "Radiant"
+            "Platinum", "Diamond", "Ascendant", "Immortal", "Radiant",
+            "Unranked"
         ]
 
         input_rank = str(self.rank).strip().capitalize()
@@ -298,7 +328,7 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
         if input_rank not in valid_ranks:
             await interaction.response.send_message(
                 "❌ Неверный ранг. Пожалуйста, введите правильный ранг из списка:\n"
-                "Iron, Bronze, Silver, Gold, Platinum, Diamond, Ascendant, Immortal, Radiant",
+                "Iron, Bronze, Silver, Gold, Platinum, Diamond, Ascendant, Immortal, Radiant, Unranked",
                 ephemeral=True
             )
             return
