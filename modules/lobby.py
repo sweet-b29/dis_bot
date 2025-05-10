@@ -219,7 +219,7 @@ class Lobby:
 
             await self.start_draft()
 
-            # await asyncio.sleep(1200)  # Ждём 20 минут
+            await asyncio.sleep(1200)  # Ждём 20 минут
 
             await self.channel.send(
                 "⚔ Капитаны, подтвердите победу, нажав на кнопку ниже:",
