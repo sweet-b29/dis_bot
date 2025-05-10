@@ -34,7 +34,7 @@ class Profile(commands.Cog):
         embed.add_field(name="Победный процент", value=winrate, inline=True)
 
         view = EditProfileButton()
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.response.send_message(embed=embed, view=view)
 
 
 class EditProfileButton(discord.ui.View):
@@ -43,7 +43,7 @@ class EditProfileButton(discord.ui.View):
 
     @discord.ui.button(label="Редактировать", style=discord.ButtonStyle.primary)
     async def edit_profile(self, interaction: discord.Interaction, button: discord.ui.Button):
-        from modules.utils import PlayerProfileModal
+        from .lobby import PlayerProfileModal
         modal = PlayerProfileModal(None, interaction)
         await interaction.response.send_modal(modal)
 

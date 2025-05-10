@@ -1,7 +1,8 @@
-import discord, os
+import os
 import logging
+import discord
 from discord.ext import commands
-from modules import lobby, draft, rating, database
+from modules import lobby, draft, database
 from loguru import logger
 from modules.lobby import CreateLobbyButton
 from dotenv import load_dotenv
@@ -42,7 +43,6 @@ async def on_ready():
 
     try:
         await database.create_db_pool(bot, DATABASE_URL)
-        await database.init_db()
         logger.success("✅ Подключение к базе данных установлено.")
     except Exception as e:
         logger.error(f"❌ Ошибка подключения к БД: {e}")
@@ -78,6 +78,7 @@ try:
     async def setup_hook():
         await bot.load_extension("modules.rating")
         await bot.load_extension("modules.admin")
+        await bot.load_extension("modules.profile")
         await bot.tree.sync()
         logger.success("✅ Slash-команды синхронизированы с Discord API.")
 

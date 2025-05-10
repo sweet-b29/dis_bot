@@ -246,7 +246,6 @@ class Lobby:
             return
 
         if getattr(self, 'victory_registered', False):
-            await interaction.response.followup.send("❌ Победа уже зафиксирована ранее.", ephemeral=True)
             await interaction.followup.send("❌ Победа уже зафиксирована ранее.", ephemeral=True)
             return
 
@@ -353,8 +352,6 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
                     ephemeral=True
                 )
                 return
-
-        await database.save_player_profile(interaction.user.id, str(self.username.value), input_rank)
 
         await database.save_player_profile(
             interaction.user.id, username, rank, datetime.utcnow()

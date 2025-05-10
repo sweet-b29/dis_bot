@@ -144,3 +144,8 @@ async def update_lobby(lobby_id: int, team_1: list[int], team_2: list[int], winn
 async def get_match_count(user_id: int):
     query = "SELECT matches FROM ratings WHERE user_id = $1"
     return await db_pool.fetchval(query, user_id) or 0
+
+
+async def get_wins(user_id: int):
+    query = "SELECT wins FROM ratings WHERE user_id = $1"
+    return await db_pool.fetchval(query, user_id) or 0
