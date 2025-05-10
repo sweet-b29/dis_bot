@@ -6,6 +6,7 @@ from modules import database
 from modules.draft import Draft, format_player_name
 from loguru import logger
 import asyncio
+from datetime import datetime, timedelta
 
 MAX_PLAYERS = 10 # Измените при необходимости
 
@@ -149,7 +150,6 @@ class Lobby:
                 "Silver": 4,
                 "Bronze": 3,
                 "Iron": 2,
-                "?": 1,
                 "Unranked": 0
             }
 
@@ -159,14 +159,17 @@ class Lobby:
                 rank = profile["rank"] if profile else "Unranked"
                 player_profiles.append((member, rank))
 
-            # Сортировка от сильного к слабому
-            player_profiles.sort(key=lambda x: RANK_ORDER.get(x[1], 0), reverse=True)
+            # Находим максимальный ранг
+            max_rank_value = max(RANK_ORDER.get(rank, 0) for _, rank in player_profiles)
 
-            # Выбираем двух сильнейших как капитанов
-            self.captains = [player_profiles[0][0], player_profiles[1][0]]
+            # Отбираем всех игроков с этим рангом
+            top_players = [member for member, rank in player_profiles if RANK_ORDER.get(rank, 0) == max_rank_value]
+
+            # Выбираем двух капитанов случайно из топ-группы
+            self.captains = random.sample(top_players, 2)
 
             # Обновляем self.members: оставшиеся игроки
-            self.members = [p[0] for p in player_profiles if p[0] not in self.captains]
+            self.members = [m for m in self.members if m not in self.captains]
 
             self.lobby_id = await database.save_lobby(
                 channel_id=self.channel.id,
@@ -243,7 +246,6 @@ class Lobby:
             return
 
         if getattr(self, 'victory_registered', False):
-            await interaction.response.followup.send("❌ Победа уже зафиксирована ранее.", ephemeral=True)
             await interaction.followup.send("❌ Победа уже зафиксирована ранее.", ephemeral=True)
             return
 
@@ -317,6 +319,9 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
         self.interaction = interaction
 
     async def on_submit(self, interaction: discord.Interaction):
+        username = self.username.value.strip()
+        rank = self.rank.value.strip().capitalize()
+
         valid_ranks = [
             "Iron", "Bronze", "Silver", "Gold",
             "Platinum", "Diamond", "Ascendant", "Immortal", "Radiant",
@@ -333,7 +338,24 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
             )
             return
 
-        await database.save_player_profile(interaction.user.id, str(self.username.value), input_rank)
+        profile = await database.get_player_profile(interaction.user.id)
+        last_change = profile.get("last_name_change") if profile else None
+
+        if last_change:
+            now = datetime.utcnow()
+            cooldown_until = last_change + timedelta(days=14)
+            if now < cooldown_until:
+                remaining = int(cooldown_until.timestamp())
+                await interaction.response.send_message(
+                    f"❌ Вы можете изменить Riot-ник только раз в 14 дней.\n"
+                    f"Следующее изменение будет доступно <t:{remaining}:R>.",
+                    ephemeral=True
+                )
+                return
+
+        await database.save_player_profile(
+            interaction.user.id, username, rank, datetime.utcnow()
+        )
 
         await interaction.response.send_message(
             f"✅ Ваш профиль сохранён!\n**Ник:** {self.username.value}\n**Ранг:** {input_rank}",
