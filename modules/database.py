@@ -1,5 +1,6 @@
 import asyncpg
 from loguru import logger
+from datetime import datetime
 
 db_pool = None
 
@@ -53,11 +54,13 @@ async def add_win(user_id: int):
     try:
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow("""
-                INSERT INTO ratings(user_id, wins) VALUES($1, 1)
-                ON CONFLICT (user_id) DO UPDATE SET wins = ratings.wins + 1
-                RETURNING wins;
+                INSERT INTO ratings(user_id, wins, matches) VALUES($1, 1, 1)
+                ON CONFLICT (user_id) DO UPDATE
+                SET wins = ratings.wins + 1,
+                    matches = ratings.matches + 1
+                RETURNING wins, matches;
             """, user_id)
-        logger.info(f"✅ Победа добавлена пользователю {user_id}. Всего побед: {row['wins']}")
+        logger.info(f"✅ Победа добавлена пользователю {user_id}. Всего побед: {row['wins']}, матчей: {row['matches']}")
         return row["wins"]
     except Exception as e:
         logger.error(f"❌ Ошибка при обновлении побед: {e}")
@@ -84,18 +87,20 @@ async def execute_query(query, *args):
     async with db_pool.acquire() as connection:
         await connection.execute(query, *args)
 
-async def save_player_profile(user_id: int, username: str, rank: str):
+async def save_player_profile(user_id: int, username: str, rank: str, last_name_change: datetime = None):
     query = """
-    INSERT INTO player_profiles (user_id, username, rank)
-    VALUES ($1, $2, $3)
+    INSERT INTO player_profiles (user_id, username, rank, last_name_change)
+    VALUES ($1, $2, $3, $4)
     ON CONFLICT (user_id) DO UPDATE
     SET username = EXCLUDED.username,
-        rank = EXCLUDED.rank
+        rank = EXCLUDED.rank,
+        last_name_change = EXCLUDED.last_name_change
     """
-    await db_pool.execute(query, user_id, username, rank)
+    await db_pool.execute(query, user_id, username, rank, last_name_change)
+
 
 async def get_player_profile(user_id: int):
-    query = "SELECT username, rank FROM player_profiles WHERE user_id = $1"
+    query = "SELECT username, rank, last_name_change FROM player_profiles WHERE user_id = $1"
     return await db_pool.fetchrow(query, user_id)
 
 async def save_lobby(channel_id: int, captain_1_id: int, captain_2_id: int):
@@ -136,3 +141,6 @@ async def update_lobby(lobby_id: int, team_1: list[int], team_2: list[int], winn
     await db_pool.execute(query, ",".join(map(str, team_1)), ",".join(map(str, team_2)), winner_team, lobby_id)
 
 
+async def get_match_count(user_id: int):
+    query = "SELECT matches FROM ratings WHERE user_id = $1"
+    return await db_pool.fetchval(query, user_id) or 0
