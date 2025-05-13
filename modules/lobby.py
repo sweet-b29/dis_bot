@@ -43,8 +43,8 @@ class JoinLobbyButton(View):
                     content=f"{interaction.user.mention}, вы присоединились к лобби!",
                     ephemeral=True
                 )
-            except discord.NotFound:
-                logger.warning(f"⚠ Interaction от {interaction.user} полностью истёк.")
+            except (discord.NotFound, discord.HTTPException):
+                logger.warning(f"⚠ Interaction от {interaction.user} истёк или webhook токен недействителен.")
 
     @discord.ui.button(label="Выйти из лобби", style=discord.ButtonStyle.danger)
     async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
