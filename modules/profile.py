@@ -34,7 +34,8 @@ class Profile(commands.Cog):
         embed.add_field(name="Победный процент", value=winrate, inline=True)
 
         view = EditProfileButton()
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 
 class EditProfileButton(discord.ui.View):
