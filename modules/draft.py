@@ -48,7 +48,13 @@ class Draft:
 
     async def pick_player(self, interaction: discord.Interaction, player):
         self.teams[self.current_captain].append(player)
+        if player not in self.available_players:
+            logger.warning(f"⚠ Игрок {player.display_name} уже выбран или не найден в доступных.")
+            await interaction.response.send_message("❗️ Этот игрок уже был выбран.", ephemeral=True)
+            return
+
         self.available_players.remove(player)
+
         logger.info(f"{self.current_captain.display_name} выбрал игрока {player.display_name}")
 
         if self.available_players:

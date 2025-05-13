@@ -165,6 +165,12 @@ class Lobby:
             # Отбираем всех игроков с этим рангом
             top_players = [member for member, rank in player_profiles if RANK_ORDER.get(rank, 0) == max_rank_value]
 
+            if len(top_players) < 2:
+                logger.warning("⚠ Недостаточно игроков для выбора двух капитанов.")
+                await self.channel.send("❌ Недостаточно игроков для драфта. Лобби будет закрыто.")
+                await self.channel.delete()
+                return
+
             # Выбираем двух капитанов случайно из топ-группы
             self.captains = random.sample(top_players, 2)
 
@@ -262,12 +268,12 @@ class Lobby:
         for player in winners:
             await database.add_win(player.id)
 
-        await interaction.followup.send("✅ Победа зафиксирована! Канал удалится через 2 минуты.",
+        await interaction.followup.send("✅ Победа зафиксирована! Канал удалится через 10 секунд.",
                                                 ephemeral=True)
         logger.info(f"✅ Победа команды {team} зафиксирована. Ждём 2 минуты перед удалением канала.")
 
-        # Ждём 2 минуты
-        await asyncio.sleep(120)
+        # Ждём 10 сек
+        await asyncio.sleep(10)
 
         # Обновляем запись о лобби в БД
         try:
@@ -361,7 +367,8 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
             f"✅ Ваш профиль сохранён!\n**Ник:** {self.username.value}\n**Ранг:** {input_rank}",
             ephemeral=True
         )
-        await self.lobby.add_member(interaction.user)
+        if self.lobby:
+            await self.lobby.add_member(interaction.user)
 
 class WinButtonView(discord.ui.View):
     def __init__(self, lobby):
