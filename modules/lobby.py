@@ -21,14 +21,19 @@ class JoinLobbyButton(View):
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         profile = await database.get_player_profile(interaction.user.id)
 
+        # Если профиля нет — отправляем модальное окно для регистрации
         if profile is None:
-            # Показываем модалку, если профиля нет
             modal = PlayerProfileModal(self.lobby, interaction)
             await interaction.response.send_modal(modal)
             return
 
         # Профиль уже есть — сразу добавляем в лобби
         await interaction.response.defer(ephemeral=True)
+
+        if not self.lobby.channel or self.lobby.channel.deleted:
+            logger.warning("❌ Попытка взаимодействия после удаления канала.")
+            return
+
         await self.lobby.add_member(interaction.user)
 
         try:
@@ -43,8 +48,8 @@ class JoinLobbyButton(View):
                     content=f"{interaction.user.mention}, вы присоединились к лобби!",
                     ephemeral=True
                 )
-            except discord.NotFound:
-                logger.warning(f"⚠ Interaction от {interaction.user} полностью истёк.")
+            except (discord.NotFound, discord.HTTPException):
+                logger.warning(f"⚠ Interaction от {interaction.user} истёк или webhook токен недействителен.")
 
     @discord.ui.button(label="Выйти из лобби", style=discord.ButtonStyle.danger)
     async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -137,45 +142,48 @@ class Lobby:
     async def close_lobby(self):
         self.draft_started = True
 
+        #Защита: если игроков меньше 2 — не продолжаем
+        if len(self.members) < 2:
+            logger.warning("⚠ Недостаточно игроков для драфта. Лобби удаляется.")
+            await self.channel.send("❌ Недостаточно игроков для драфта. Лобби будет закрыто.")
+            await self.channel.delete(reason="Недостаточно игроков для драфта.")
+            return
+
         try:
-            # Выбор капитанов
-            # Упорядочиваем всех игроков по рангу (по убыванию)
             RANK_ORDER = {
-                "Radiant": 10,
-                "Immortal": 9,
-                "Ascendant": 8,
-                "Diamond": 7,
-                "Platinum": 6,
-                "Gold": 5,
-                "Silver": 4,
-                "Bronze": 3,
-                "Iron": 2,
-                "Unranked": 0
+                "Radiant": 10, "Immortal": 9, "Ascendant": 8, "Diamond": 7,
+                "Platinum": 6, "Gold": 5, "Silver": 4, "Bronze": 3,
+                "Iron": 2, "Unranked": 1
             }
 
+            # Получаем профили всех игроков
             player_profiles = []
             for member in self.members:
                 profile = await database.get_player_profile(member.id)
                 rank = profile["rank"] if profile else "Unranked"
                 player_profiles.append((member, rank))
 
-            # Находим максимальный ранг
-            max_rank_value = max(RANK_ORDER.get(rank, 0) for _, rank in player_profiles)
+            # Начинаем с самого высокого ранга
+            current_rank = max(RANK_ORDER.get(rank, 0) for _, rank in player_profiles)
 
-            # Отбираем всех игроков с этим рангом
-            top_players = [member for member, rank in player_profiles if RANK_ORDER.get(rank, 0) == max_rank_value]
+            top_players = []
+            while current_rank >= 0:
+                top_players = [
+                    member for member, rank in player_profiles
+                    if RANK_ORDER.get(rank, 0) == current_rank
+                ]
+                if len(top_players) >= 2:
+                    break
+                current_rank -= 1
 
             if len(top_players) < 2:
                 logger.warning("⚠ Недостаточно игроков для выбора двух капитанов.")
                 await self.channel.send("❌ Недостаточно игроков для драфта. Лобби будет закрыто.")
-                await self.channel.delete()
+                await self.channel.delete(reason="Недостаточно капитанов.")
                 return
 
-            # Выбираем двух капитанов случайно из топ-группы
             self.captains = random.sample(top_players, 2)
-
-            # Обновляем self.members: оставшиеся игроки
-            self.members = [m for m in self.members if m not in self.captains]
+            self.members = [m for m, _ in player_profiles if m not in self.captains]
 
             self.lobby_id = await database.save_lobby(
                 channel_id=self.channel.id,
@@ -183,16 +191,16 @@ class Lobby:
                 captain_2_id=self.captains[1].id
             )
 
-            # Обновление прав в канале
+            # Обновление прав
             overwrites = {
                 self.guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False),
                 self.guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True),
                 self.captains[0]: discord.PermissionOverwrite(read_messages=True, send_messages=True),
                 self.captains[1]: discord.PermissionOverwrite(read_messages=True, send_messages=True),
             }
-
             await self.channel.edit(overwrites=overwrites)
 
+            # Embed-сообщение
             embed = discord.Embed(
                 title="✖ Лобби закрыто",
                 description="Набрано максимальное количество игроков.",
@@ -201,36 +209,17 @@ class Lobby:
 
             captain_1_info = await format_player_name(self.captains[0])
             captain_2_info = await format_player_name(self.captains[1])
+            embed.add_field(name="⚔ Капитаны выбраны", value=f"♦ {captain_1_info}\n♣ {captain_2_info}", inline=False)
 
-            embed.add_field(
-                name="⚔ Капитаны выбраны",
-                value=f"♦ {captain_1_info}\n♣ {captain_2_info}",
-                inline=False
-            )
-            # Список всех участников лобби
-            players_info = []
-            for member in self.members:
-                info = await format_player_name(member)
-                players_info.append(f"- {info}")
-
-            embed.add_field(
-                name="🎮 Игроки в лобби",
-                value="\n".join(players_info),
-                inline=False
-            )
-
+            players_info = [f"- {await format_player_name(m)}" for m in self.members]
+            embed.add_field(name="🎮 Игроки в лобби", value="\n".join(players_info), inline=False)
             embed.set_footer(text="Переходим к драфту игроков...")
 
             await self.channel.send(embed=embed)
-
             await self.start_draft()
 
-            await asyncio.sleep(1200)  # Ждём 20 минут
-
-            await self.channel.send(
-                "⚔ Капитаны, подтвердите победу, нажав на кнопку ниже:",
-                view=WinButtonView(self)
-            )
+            await asyncio.sleep(1200)
+            await self.channel.send("⚔ Капитаны, подтвердите победу, нажав на кнопку ниже:", view=WinButtonView(self))
 
         except Exception as e:
             logger.error(f"Ошибка при закрытии лобби: {e}")
