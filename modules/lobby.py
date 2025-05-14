@@ -30,8 +30,9 @@ class JoinLobbyButton(View):
         # Профиль уже есть — сразу добавляем в лобби
         await interaction.response.defer(ephemeral=True)
 
-        if not self.lobby.channel or self.lobby.channel.deleted:
+        if not self.lobby.channel or not self.lobby.guild.get_channel(self.lobby.channel.id):
             logger.warning("❌ Попытка взаимодействия после удаления канала.")
+            await interaction.followup.send("❌ Канал лобби больше не существует.", ephemeral=True)
             return
 
         await self.lobby.add_member(interaction.user)
