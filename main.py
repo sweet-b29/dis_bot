@@ -41,12 +41,7 @@ async def on_ready():
     else:
         logger.error("⚠️ Не найден канал с указанным ID.")
 
-    try:
-        await database.create_db_pool(bot, DATABASE_URL)
-        logger.success("✅ Подключение к базе данных установлено.")
-    except Exception as e:
-        logger.error(f"❌ Ошибка подключения к БД: {e}")
-        await bot.close()
+
 @bot.event
 async def on_voice_state_update(member, before, after):
     if before.channel and before.channel != after.channel:
@@ -66,7 +61,12 @@ logging.getLogger("discord.gateway").setLevel(logging.WARNING)
 
 # Проверяем наличие токена перед запуском
 if not TOKEN:
-    raise ValueError("❌ Ошибка: DISCORD_BOT_TOKEN не найден.")
+    logger.error("❌ DISCORD_BOT_TOKEN не найден в .env")
+    exit(1)
+
+if not DATABASE_URL:
+    logger.error("❌ DATABASE_URL не найден в .env")
+    exit(1)
 
 # Настройка модулей
 lobby.setup(bot)
@@ -76,6 +76,16 @@ draft.setup(bot)
 try:
     @bot.event
     async def setup_hook():
+        # Инициализация БД до загрузки команд
+        try:
+            await database.create_db_pool(bot, DATABASE_URL)
+            logger.success("✅ Подключение к базе данных установлено.")
+        except Exception as e:
+            logger.error(f"❌ Ошибка подключения к БД: {e}")
+            await bot.close()
+            return
+
+        # Загрузка модулей
         await bot.load_extension("modules.rating")
         await bot.load_extension("modules.admin")
         await bot.load_extension("modules.profile")
@@ -83,7 +93,8 @@ try:
         logger.success("✅ Slash-команды синхронизированы с Discord API.")
 
     bot.run(TOKEN)
+
 except discord.LoginFailure:
-    logger.error("❌ Неверный токен Discord. Проверьте .env файл.")
+    logger.error("❌ Неверный токен Discord.")
 except Exception as e:
-    logger.error(f"❌ Ошибка при запуске бота: {e}")
+    logger.error(f"❌ Фатальная ошибка: {e}")
