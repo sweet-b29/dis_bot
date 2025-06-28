@@ -1,9 +1,10 @@
+import random
 import discord
 from loguru import logger
 from discord import File, Embed
 from modules import database
 
-MAX_PLAYERS = 10  # Измените при необходимости
+MAX_PLAYERS = 4  # Измените при необходимости
 
 async def format_player_name(member: discord.Member) -> str:
     profile = await database.get_player_profile(member.id)
@@ -23,8 +24,8 @@ class Draft:
         self.current_captain = captains[0]
         self.draft_message = None
         self.available_maps = [
-            "Ascent", "Bind", "Haven", "Split", "Icebox",
-            "Breeze", "Fracture", "Lotus", "Sunset", "Abyss", "Pearl"
+            "Ascent", "Bind", "Haven", "Split", "Icebox", "Breeze",
+             "Fracture", "Lotus", "Sunset", "Abyss", "Pearl", "Corrode"
         ]
         self.selected_map = None
         self.banned_maps = []
@@ -103,16 +104,38 @@ class Draft:
         logger.info("Начался драфт карт.")
 
     async def choose_sides(self):
-        self.current_captain = self.captains[0]
-        captain = self.current_captain
-        view = SideSelectView(self, captain)
+        sides = ["Атака", "Защита"]
+        random.shuffle(sides)
+
+        self.team_sides = {
+            self.captains[0].id: sides[0],
+            self.captains[1].id: sides[1]
+        }
 
         embed = discord.Embed(
-            title="🧭 Выбор сторон",
-            description=f"{captain.mention}, выбери сторону для своей команды:",
-            color=discord.Color.orange()
+            title="✅ Стороны распределены!",
+            description=(
+                f"**Команда {self.captains[0].display_name}** играет за **{sides[0]}**\n"
+                f"**Команда {self.captains[1].display_name}** играет за **{sides[1]}**"
+            ),
+            color=discord.Color.green()
         )
-        self.side_message = await self.channel.send(embed=embed, view=view)
+
+        await self.channel.send(embed=embed)
+        await self.send_map_embed()
+        await self.create_voice_channels()
+
+    # async def choose_sides(self):
+    #     self.current_captain = self.captains[0]
+    #     captain = self.current_captain
+    #     view = SideSelectView(self, captain)
+    #
+    #     embed = discord.Embed(
+    #         title="🧭 Выбор сторон",
+    #         description=f"{captain.mention}, выбери сторону для своей команды:",
+    #         color=discord.Color.orange()
+    #     )
+    #     self.side_message = await self.channel.send(embed=embed, view=view)
 
     async def create_voice_channels(self):
         category = self.channel.category
