@@ -1,3 +1,4 @@
+import os
 import discord
 from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput, Select
@@ -300,7 +301,7 @@ class CreateLobbyButton(View):
     async def create_lobby_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
 
-        category_id = 1321649371837759499  # Указать ID нужной категории
+        category_id = int(os.getenv("CATEGORY_ID"))  # Указать ID нужной категории
         lobby_instance = Lobby(interaction.guild, category_id)
         await lobby_instance.create_channel()
 
