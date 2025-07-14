@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands, Embed
-from modules import database
+from modules.utils import api_client
 
 
 class Profile(commands.Cog):
@@ -10,14 +10,17 @@ class Profile(commands.Cog):
 
     @app_commands.command(name="profile", description="Показать свой профиль")
     async def profile(self, interaction: discord.Interaction):
-        profile = await database.get_player_profile(interaction.user.id)
-        wins = await database.get_wins(interaction.user.id)
-        matches = await database.get_match_count(interaction.user.id)
+        profile = await api_client.get_player_profile(interaction.user.id)
 
-        if not profile:
-            await interaction.response.send_message("❌ Профиль не найден. Сначала присоединитесь к лобби.", ephemeral=True)
+        if not profile or "error" in profile:
+            await interaction.response.send_message(
+                "❌ Профиль не найден. Сначала присоединитесь к лобби.",
+                ephemeral=True
+            )
             return
 
+        wins = profile.get("wins", 0)
+        matches = profile.get("matches", 0)
         username = profile["username"]
         rank = profile["rank"]
         winrate = "—" if matches == 0 else f"{round((wins / matches) * 100, 1)}%"
@@ -44,7 +47,7 @@ class EditProfileButton(discord.ui.View):
 
     @discord.ui.button(label="Редактировать", style=discord.ButtonStyle.primary)
     async def edit_profile(self, interaction: discord.Interaction, button: discord.ui.Button):
-        from .lobby import PlayerProfileModal
+        from modules.lobby.lobby import PlayerProfileModal
         modal = PlayerProfileModal(None, interaction)
         await interaction.response.send_modal(modal)
 

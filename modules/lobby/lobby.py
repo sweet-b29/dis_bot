@@ -1,15 +1,14 @@
 import discord
 from discord.ext import commands
-from discord.ui import View, Button, Modal, TextInput, Select
+from discord.ui import View
 import random
-from modules import database
-from modules.draft import Draft, format_player_name
+from modules.utils import api_client
+from modules.lobby.draft import Draft, format_player_name
 from loguru import logger
 import asyncio
-from datetime import datetime, timedelta
+import os
 
-MAX_PLAYERS = 10 # Измените при необходимости
-
+MAX_PLAYERS = 4  # Измените при необходимости
 
 
 class JoinLobbyButton(View):
@@ -19,22 +18,37 @@ class JoinLobbyButton(View):
 
     @discord.ui.button(label="Присоединиться к лобби", style=discord.ButtonStyle.success)
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        profile = await database.get_player_profile(interaction.user.id)
-
-        # Если профиля нет — отправляем модальное окно для регистрации
-        if profile is None:
-            modal = PlayerProfileModal(self.lobby, interaction)
-            await interaction.response.send_modal(modal)
+        try:
+            profile = await api_client.get_player_profile(interaction.user.id)
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения профиля: {e}")
+            await interaction.response.send_message("⚠ Не удалось получить профиль. Попробуйте позже.", ephemeral=True)
             return
 
-        # Профиль уже есть — сразу добавляем в лобби
-        await interaction.response.defer(ephemeral=True)
+        if not profile or not profile.get("username") or not profile.get("rank"):
+            try:
+                modal = PlayerProfileModal(self.lobby, interaction)
+                await interaction.response.send_modal(modal)
+            except Exception as e:
+                logger.exception(f"❌ Не удалось отправить модалку регистрации: {e}")
+                await interaction.response.send_message("⚠ Не удалось открыть форму регистрации.", ephemeral=True)
+            return
 
-        if not self.lobby.channel or self.lobby.channel.deleted:
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except discord.InteractionResponded:
+            pass  # если уже ответили
+
+        if not self.lobby.channel or not self.lobby.guild.get_channel(self.lobby.channel.id):
             logger.warning("❌ Попытка взаимодействия после удаления канала.")
             return
 
-        await self.lobby.add_member(interaction.user)
+        try:
+            await self.lobby.add_member(interaction.user)
+        except Exception as e:
+            logger.error(f"❌ Не удалось добавить в лобби: {e}")
+            await interaction.followup.send("⚠ Не удалось присоединиться к лобби.", ephemeral=True)
+            return
 
         try:
             await interaction.message.edit(
@@ -42,14 +56,14 @@ class JoinLobbyButton(View):
                 view=self
             )
         except discord.NotFound:
-            logger.warning("⚠ Сообщение не найдено при попытке обновления (возможно, канал уже удалён).")
+            logger.warning("⚠ Сообщение не найдено при попытке обновления (возможно, удалено).")
             try:
                 await interaction.followup.send(
                     content=f"{interaction.user.mention}, вы присоединились к лобби!",
                     ephemeral=True
                 )
             except (discord.NotFound, discord.HTTPException):
-                logger.warning(f"⚠ Interaction от {interaction.user} истёк или webhook токен недействителен.")
+                logger.warning(f"⚠ Interaction истёк или недействителен для {interaction.user}")
 
     @discord.ui.button(label="Выйти из лобби", style=discord.ButtonStyle.danger)
     async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -68,14 +82,13 @@ class JoinLobbyButton(View):
                 view=self
             )
         except discord.NotFound:
-            pass
+            logger.warning("⚠ Сообщение лобби не найдено при выходе игрока.")
 
 
 class Lobby:
     count = 0
 
     def __init__(self, guild: discord.Guild, category_id: int):
-        self.lobby_id = None
         self.message = None
         self.view = None
         Lobby.count += 1
@@ -131,7 +144,6 @@ class Lobby:
 
         if len(self.members) >= MAX_PLAYERS and not self.draft_started:
             self.draft_started = True
-            # Убирает кнопку совсем
             for item in self.view.children:
                 if isinstance(item, discord.ui.Button):
                     item.disabled = True
@@ -142,9 +154,7 @@ class Lobby:
     async def close_lobby(self):
         self.draft_started = True
 
-        #Защита: если игроков меньше 2 — не продолжаем
         if len(self.members) < 2:
-            logger.warning("⚠ Недостаточно игроков для драфта. Лобби удаляется.")
             await self.channel.send("❌ Недостаточно игроков для драфта. Лобби будет закрыто.")
             await self.channel.delete(reason="Недостаточно игроков для драфта.")
             return
@@ -156,42 +166,22 @@ class Lobby:
                 "Iron": 2, "Unranked": 1
             }
 
-            # Получаем профили всех игроков
             player_profiles = []
             for member in self.members:
-                profile = await database.get_player_profile(member.id)
-                rank = profile["rank"] if profile else "Unranked"
+                profile = await api_client.get_player_profile(member.id)
+                rank = profile.get("rank", "Unranked") if profile else "Unranked"
                 player_profiles.append((member, rank))
 
-            # Начинаем с самого высокого ранга
-            current_rank = max(RANK_ORDER.get(rank, 0) for _, rank in player_profiles)
-
-            top_players = []
-            while current_rank >= 0:
-                top_players = [
-                    member for member, rank in player_profiles
-                    if RANK_ORDER.get(rank, 0) == current_rank
-                ]
-                if len(top_players) >= 2:
-                    break
-                current_rank -= 1
-
-            if len(top_players) < 2:
-                logger.warning("⚠ Недостаточно игроков для выбора двух капитанов.")
-                await self.channel.send("❌ Недостаточно игроков для драфта. Лобби будет закрыто.")
-                await self.channel.delete(reason="Недостаточно капитанов.")
-                return
-
-            self.captains = random.sample(top_players, 2)
-            self.members = [m for m, _ in player_profiles if m not in self.captains]
-
-            self.lobby_id = await database.save_lobby(
-                channel_id=self.channel.id,
-                captain_1_id=self.captains[0].id,
-                captain_2_id=self.captains[1].id
+            # Сортируем по убыванию ранга
+            sorted_players = sorted(
+                player_profiles,
+                key=lambda x: RANK_ORDER.get(x[1], 0),
+                reverse=True
             )
 
-            # Обновление прав
+            self.captains = [sorted_players[0][0], sorted_players[1][0]]
+            self.members = [m for m, _ in player_profiles if m not in self.captains]
+
             overwrites = {
                 self.guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False),
                 self.guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True),
@@ -200,7 +190,6 @@ class Lobby:
             }
             await self.channel.edit(overwrites=overwrites)
 
-            # Embed-сообщение
             embed = discord.Embed(
                 title="✖ Лобби закрыто",
                 description="Набрано максимальное количество игроков.",
@@ -218,7 +207,7 @@ class Lobby:
             await self.channel.send(embed=embed)
             await self.start_draft()
 
-            await asyncio.sleep(1200)
+            await asyncio.sleep(30) #Переставить потом на 1200
             await self.channel.send("⚔ Капитаны, подтвердите победу, нажав на кнопку ниже:", view=WinButtonView(self))
 
         except Exception as e:
@@ -226,12 +215,10 @@ class Lobby:
 
     async def start_draft(self):
         try:
-            self.draft = Draft(self.guild, self.channel, self.captains, self.members)
+            self.draft = Draft(self, self.guild, self.channel, self.captains, self.members)
             await self.draft.start()
         except Exception as e:
             logger.error(f"Ошибка при старте драфта: {e}")
-
-
 
     async def register_win(self, interaction: discord.Interaction, team: int):
         await interaction.response.defer(ephemeral=True)
@@ -240,54 +227,32 @@ class Lobby:
             await interaction.followup.send("❌ Только капитан может подтвердить победу!", ephemeral=True)
             return
 
-        if getattr(self, 'victory_registered', False):
+        if self.victory_registered:
             await interaction.followup.send("❌ Победа уже зафиксирована ранее.", ephemeral=True)
+            return
+
+        if not hasattr(self, "match_id") or self.match_id is None:
+            await interaction.followup.send("❌ ID матча не найден. Невозможно сохранить результат.", ephemeral=True)
             return
 
         self.victory_registered = True
 
-        winning_captain = self.captains[0] if team == 1 else self.captains[1]
-
-        winners = []
-        for cap, members in self.draft.teams.items():
-            if cap.id == winning_captain.id:
-                winners = [cap] + members
-                break
-
-        for player in winners:
-            await database.add_win(player.id)
-
-        await interaction.followup.send("✅ Победа зафиксирована! Канал удалится через 10 секунд.",
-                                                ephemeral=True)
-        logger.info(f"✅ Победа команды {team} зафиксирована. Ждём 2 минуты перед удалением канала.")
-
-        # Ждём 10 сек
-        await asyncio.sleep(10)
-
-        # Обновляем запись о лобби в БД
         try:
-            team_1_ids = [p.id for p in [self.captains[0]] + self.draft.teams.get(self.captains[0], [])]
-            team_2_ids = [p.id for p in [self.captains[1]] + self.draft.teams.get(self.captains[1], [])]
-
-            await database.update_lobby(
-                lobby_id=self.lobby_id,
-                team_1=team_1_ids,
-                team_2=team_2_ids,
+            await api_client.save_match_result(
+                match_id=self.match_id,
                 winner_team=team
             )
+            await interaction.followup.send("✅ Победа зафиксирована! Канал удалится через 10 секунд.", ephemeral=True)
         except Exception as e:
-            logger.error(f"❌ Ошибка при обновлении записи лобби: {e}")
+            logger.error(f"❌ Ошибка при сохранении победы: {e}")
+            await interaction.followup.send("❌ Ошибка при сохранении победы.", ephemeral=True)
+            return
 
+        await asyncio.sleep(10)
         try:
             await self.channel.delete(reason="Лобби завершено и победа зафиксирована.")
         except Exception as e:
             logger.error(f"❌ Ошибка при удалении текстового канала: {e}")
-
-    async def get_team_members(self, team_number: int):
-        if team_number == 1:
-            return [self.captains[0]] + self.teams[0]
-        else:
-            return [self.captains[1]] + self.teams[1]
 
 
 class CreateLobbyButton(View):
@@ -299,17 +264,25 @@ class CreateLobbyButton(View):
     async def create_lobby_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
 
-        category_id = 1321649371837759499  # Указать ID нужной категории
+        category_id = int(os.getenv("LOBBY_CATEGORY_ID", 0))
         lobby_instance = Lobby(interaction.guild, category_id)
         await lobby_instance.create_channel()
 
 
 class PlayerProfileModal(discord.ui.Modal, title="Введите данные профиля"):
-    username = discord.ui.TextInput(label="Ваш ник в игре", placeholder="Например: sweet#b29", max_length=32)
-    rank = discord.ui.TextInput(label="Ваш актуальный ранг", placeholder="Например: Immortal", max_length=32)
+    username = discord.ui.TextInput(
+        label="Ваш ник в игре",
+        placeholder="Например: sweet#b29",
+        max_length=32
+    )
+    rank = discord.ui.TextInput(
+        label="Ваш актуальный ранг",
+        placeholder="Например: Immortal",
+        max_length=32
+    )
 
     def __init__(self, lobby, interaction):
-        super().__init__()
+        super().__init__(timeout=None)
         self.lobby = lobby
         self.interaction = interaction
 
@@ -323,9 +296,7 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
             "Unranked"
         ]
 
-        input_rank = str(self.rank).strip().capitalize()
-
-        if input_rank not in valid_ranks:
+        if rank not in valid_ranks:
             await interaction.response.send_message(
                 "❌ Неверный ранг. Пожалуйста, введите правильный ранг из списка:\n"
                 "Iron, Bronze, Silver, Gold, Platinum, Diamond, Ascendant, Immortal, Radiant, Unranked",
@@ -333,31 +304,35 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
             )
             return
 
-        profile = await database.get_player_profile(interaction.user.id)
-        last_change = profile.get("last_name_change") if profile else None
+        try:
+            response = await api_client.update_player_profile(
+                interaction.user.id, username, rank, create_if_not_exist=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Ошибка при сохранении профиля: {e}", ephemeral=True
+            )
+            return
 
-        if last_change:
-            now = datetime.utcnow()
-            cooldown_until = last_change + timedelta(days=14)
-            if now < cooldown_until:
-                remaining = int(cooldown_until.timestamp())
-                await interaction.response.send_message(
-                    f"❌ Вы можете изменить Riot-ник только раз в 14 дней.\n"
-                    f"Следующее изменение будет доступно <t:{remaining}:R>.",
-                    ephemeral=True
-                )
-                return
-
-        await database.save_player_profile(
-            interaction.user.id, username, rank, datetime.utcnow()
-        )
+        if isinstance(response, dict) and "error" in response:
+            await interaction.response.send_message(
+                f"❌ {response['error']}", ephemeral=True
+            )
+            return
 
         await interaction.response.send_message(
-            f"✅ Ваш профиль сохранён!\n**Ник:** {self.username.value}\n**Ранг:** {input_rank}",
+            f"✅ Ваш профиль сохранён!\n**Ник:** {username}\n**Ранг:** {rank}",
             ephemeral=True
         )
+
         if self.lobby:
-            await self.lobby.add_member(interaction.user)
+            try:
+                await self.lobby.add_member(interaction.user)
+            except Exception as e:
+                await interaction.followup.send(
+                    f"⚠ Ошибка при добавлении в лобби: {e}", ephemeral=True
+                )
+
 
 class WinButtonView(discord.ui.View):
     def __init__(self, lobby):
@@ -379,8 +354,6 @@ class WinButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         await self.lobby.register_win(interaction, team=self.team)
-
-
 
 
 

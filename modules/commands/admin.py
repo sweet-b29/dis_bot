@@ -1,10 +1,13 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from modules import database
+from modules.utils import api_client
+import os
 
-ALLOWED_ROLES = [1325171549921214494, 1337161337071079556]
-@app_commands.guilds(discord.Object(id=1215766036305936394))
+GUILD_ID = int(os.getenv("GUILD_ID", 0))
+ALLOWED_ROLES = list(map(int, os.getenv("ALLOWED_ROLES", "").split(",")))
+
+@app_commands.guilds(discord.Object(id=GUILD_ID))
 
 class Admin(commands.Cog):
     def __init__(self, bot):
@@ -17,7 +20,7 @@ class Admin(commands.Cog):
     @app_commands.describe(user="Участник", rank="Ранг", username="Riot-ник (опционально)")
     async def changerank(self, interaction: discord.Interaction, user: discord.Member, rank: str, username: str = None):
         username = username or user.display_name
-        await database.save_player_profile(user.id, username, rank.capitalize())
+        await api_client.update_player_profile(user.id, username, rank.capitalize())
         await interaction.response.send_message(
             f"✏️ Обновлён профиль {user.mention}: **{username}**, ранг **{rank.capitalize()}**",
             ephemeral=True
@@ -26,9 +29,9 @@ class Admin(commands.Cog):
     @app_commands.command(name="changenick", description="Изменить Riot-ник игрока")
     @app_commands.describe(user="Участник", username="Новый Riot-ник")
     async def changenick(self, interaction: discord.Interaction, user: discord.Member, username: str):
-        profile = await database.get_player_profile(user.id)
-        if profile:
-            await database.save_player_profile(user.id, username, profile['rank'])
+        profile = await api_client.get_all_players()
+        if any(p['discord_id'] == user.id for p in profile):
+            await api_client.update_player_profile(user.id, username, None)
             await interaction.response.send_message(
                 f"🔁 Ник игрока {user.mention} изменён на **{username}**.",
                 ephemeral=True
@@ -42,31 +45,11 @@ class Admin(commands.Cog):
     @app_commands.command(name="changewins", description="Установить количество побед игрока")
     @app_commands.describe(user="Участник", wins="Новое количество побед")
     async def changewins(self, interaction: discord.Interaction, user: discord.Member, wins: int):
-        await database.set_wins(user.id, wins)
+        await api_client.set_player_wins(user.id, wins)
         await interaction.response.send_message(
             f"🏆 Победы {user.mention} установлены на **{wins}**.",
             ephemeral=True
         )
-
-    @app_commands.command(name="listplayers", description="Список всех игроков")
-    async def listplayers(self, interaction: discord.Interaction):
-        profiles = await database.get_all_profiles_with_wins()
-        if not profiles:
-            await interaction.response.send_message("📭 Нет зарегистрированных игроков.", ephemeral=True)
-            return
-
-        description = ""
-        for row in profiles:
-            user = interaction.guild.get_member(row["user_id"])
-            mention = user.mention if user else f"ID: {row['user_id']}"
-            description += f"• {mention} — **{row['username']}** ({row['rank']}), 🏆 {row['wins']} побед\n"
-
-        embed = discord.Embed(
-            title="📋 Список всех игроков",
-            description=description[:4000],
-            color=discord.Color.teal()
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="adminhelp", description="Показать команды администратора")
     async def adminhelp(self, interaction: discord.Interaction):
@@ -78,7 +61,6 @@ class Admin(commands.Cog):
         embed.add_field(name="/changerank", value="✏ Изменить ранг игрока", inline=False)
         embed.add_field(name="/changenick", value="🔁 Изменить Riot-ник игрока", inline=False)
         embed.add_field(name="/changewins", value="🏆 Установить количество побед", inline=False)
-        embed.add_field(name="/listplayers", value="📋 Показать всех игроков", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 async def setup(bot):

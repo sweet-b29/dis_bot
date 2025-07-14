@@ -1,5 +1,6 @@
 from loguru import logger
 import discord
+from discord.ext import commands
 
 
 async def move_members(voice_channel: discord.VoiceChannel, members: list):

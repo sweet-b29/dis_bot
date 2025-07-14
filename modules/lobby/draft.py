@@ -1,20 +1,20 @@
 import discord
 from loguru import logger
 from discord import File, Embed
-from modules import database
+from modules.utils import api_client
+import os
+from pathlib import Path
 
-MAX_PLAYERS = 10  # Измените при необходимости
+MAX_PLAYERS = 4 # Измените при необходимости
 
 async def format_player_name(member: discord.Member) -> str:
-    profile = await database.get_player_profile(member.id)
-    if profile:
+    profile = await api_client.get_player_profile(member.id)
+    if isinstance(profile, dict) and profile.get("username") and profile.get("rank"):
         return f"{member.mention} - {profile['username']} ({profile['rank']})"
-    else:
-        return f"{member.mention}"
-
+    return f"{member.mention} - профиль не найден"
 
 class Draft:
-    def __init__(self, guild, channel, captains, players):
+    def __init__(self, lobby, guild, channel, captains, players):
         self.guild = guild
         self.channel = channel
         self.captains = captains
@@ -30,6 +30,7 @@ class Draft:
         self.banned_maps = []
         self.voice_channels = []
         self.team_sides = {}
+        self.lobby = lobby
 
     async def start(self):
         for captain in self.captains:
@@ -42,19 +43,16 @@ class Draft:
             description=f"Первым выбирает капитан {self.current_captain.mention}.",
             color=discord.Color.gold()
         )
-
         self.draft_message = await self.channel.send(embed=embed, view=DraftView(self))
         logger.info(f"Старт драфта. Первый капитан: {self.current_captain}")
 
     async def pick_player(self, interaction: discord.Interaction, player):
         self.teams[self.current_captain].append(player)
         if player not in self.available_players:
-            logger.warning(f"⚠ Игрок {player.display_name} уже выбран или не найден в доступных.")
             await interaction.response.send_message("❗️ Этот игрок уже был выбран.", ephemeral=True)
             return
 
         self.available_players.remove(player)
-
         logger.info(f"{self.current_captain.display_name} выбрал игрока {player.display_name}")
 
         if self.available_players:
@@ -98,45 +96,121 @@ class Draft:
             description=f"Капитан {self.current_captain.mention}, выберите карту для бана.",
             color=discord.Color.purple()
         )
-
         await self.channel.send(embed=embed, view=MapDraftView(self))
         logger.info("Начался драфт карт.")
 
+    async def end_map_ban(self):
+        logger.info(f"Финальная карта: {self.selected_map}")
+        await self.choose_sides()
+
     async def choose_sides(self):
         self.current_captain = self.captains[0]
-        captain = self.current_captain
-        view = SideSelectView(self, captain)
-
         embed = discord.Embed(
             title="🧭 Выбор сторон",
-            description=f"{captain.mention}, выбери сторону для своей команды:",
+            description=f"{self.current_captain.mention}, выбери сторону для своей команды:",
             color=discord.Color.orange()
         )
-        self.side_message = await self.channel.send(embed=embed, view=view)
+        self.side_message = await self.channel.send(embed=embed, view=SideSelectView(self, self.current_captain))
+
+    async def finalize_match(self):
+        try:
+            # Получаем Django ID капитанов
+            captain_1_data = await api_client.get_player_profile(self.captains[0].id)
+            captain_2_data = await api_client.get_player_profile(self.captains[1].id)
+
+            logger.debug(f"🔍 Discord ID капитана 1: {self.captains[0].id} ({self.captains[0].display_name})")
+            logger.debug(f"🔍 Discord ID капитана 2: {self.captains[1].id} ({self.captains[1].display_name})")
+
+            captain_1_django_id = captain_1_data.get("id")
+            captain_2_django_id = captain_2_data.get("id")
+            if not captain_1_django_id or not captain_2_django_id:
+                logger.error("❌ Не удалось получить Django ID капитанов.")
+                return
+
+            # Получаем Django ID всех игроков в командах
+            team_1_ids = [captain_1_django_id]
+            team_2_ids = [captain_2_django_id]
+
+            for member in self.teams[self.captains[0]]:
+                profile = await api_client.get_player_profile(member.id)
+                if profile and "id" in profile:
+                    team_1_ids.append(profile["id"])
+                else:
+                    logger.warning(f"❌ Не удалось получить Django ID для участника {member.display_name}")
+
+            for member in self.teams[self.captains[1]]:
+                profile = await api_client.get_player_profile(member.id)
+                if profile and "id" in profile:
+                    team_2_ids.append(profile["id"])
+                else:
+                    logger.warning(f"❌ Не удалось получить Django ID для участника {member.display_name}")
+
+            map_name = self.selected_map
+            sides = {
+                "team_1": self.team_sides.get(self.captains[0].id),
+                "team_2": self.team_sides.get(self.captains[1].id)
+            }
+
+            # Составляем payload
+            match_payload = {
+                "captain_1": captain_1_django_id,
+                "captain_2": captain_2_django_id,
+                "team_1": team_1_ids,
+                "team_2": team_2_ids,
+                "map_name": map_name,
+                "sides": sides
+            }
+
+            # Отправляем его в API
+            match_data = await api_client.create_match(match_payload)
+            logger.debug(f"📡 Ответ от API: {match_data}")
+            self.match_id = match_data.get("id")
+            self.lobby.match_id = self.match_id
+
+            logger.success(f"Матч сохранён в Django: {match_data}")
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении матча в Django: {e}")
+
+    def switch_captain(self):
+        self.current_captain = self.captains[1] if self.current_captain == self.captains[0] else self.captains[0]
+
+    async def send_map_embed(self):
+        file_path = Path(__file__).resolve().parents[1] / "maps" / f"{self.selected_map}.webp"
+
+        embed = Embed(
+            title="✅ Финальное подтверждение матча!",
+            description=(
+                f"Игра будет проходить на **{self.selected_map}**.\n"
+                f"♦ **{self.captains[0].display_name}** играет за **{self.team_sides[self.captains[0].id]}**\n"
+                f"♣ **{self.captains[1].display_name}** играет за **{self.team_sides[self.captains[1].id]}**"
+            ),
+            color=discord.Color.green()
+        )
+
+        # Проверяем, существует ли файл карты
+        if os.path.exists(file_path):
+            file = File(file_path, filename="map.webp")
+            embed.set_image(url="attachment://map.webp")
+            await self.channel.send(embed=embed, file=file)
+        else:
+            logger.warning(f"⚠️ Файл карты не найден: {file_path}")
+            await self.channel.send(
+                embed=embed,
+                content="⚠️ Картинка карты не найдена. Отправляем embed без изображения."
+            )
+
+        await self.finalize_match()
 
     async def create_voice_channels(self):
         category = self.channel.category
         teams = [self.teams[self.captains[0]], self.teams[self.captains[1]]]
         names = [f"♦︎ {self.captains[0].display_name}", f"♣︎ {self.captains[1].display_name}"]
 
-
-
         for idx, (team_members, name) in enumerate(zip(teams, names)):
             overwrites = {
                 self.guild.default_role: discord.PermissionOverwrite(connect=False),
                 self.guild.me: discord.PermissionOverwrite(connect=True, speak=True),
-
             }
-
-            mod_role = discord.utils.get(self.guild.roles, id=1337161337071079556)
-            if mod_role:
-                overwrites[mod_role] = discord.PermissionOverwrite(
-                    connect=True,
-                    speak=True,
-                    move_members=True,
-                    view_channel=True
-                )
-
             for member in team_members + [self.captains[idx]]:
                 overwrites[member] = discord.PermissionOverwrite(connect=True, speak=True)
 
@@ -151,14 +225,11 @@ class Draft:
                 if member.voice:
                     try:
                         await member.move_to(vc)
-                        logger.info(f"🔁 Переместил {member.display_name} в голосовой канал {vc.name}")
                     except Exception as e:
                         logger.warning(f"⚠ Не удалось переместить {member.display_name}: {e}")
 
             self.voice_channels.append(vc)
-
         await self.channel.send("🎙 Голосовые каналы созданы! Приятной игры.")
-        logger.info("Голосовые каналы созданы и игроки распределены.")
 
         # 🔔 Отправляем напоминания игрокам, которые не в голосовом канале
         for idx, (team_members, captain) in enumerate(
@@ -168,49 +239,14 @@ class Draft:
                     await self.channel.send(
                         f"🔔 {member.mention}, вы ещё не в голосовом канале своей команды! Зайдите как можно скорее.")
 
-    def switch_captain(self):
-        self.current_captain = (
-            self.captains[1] if self.current_captain == self.captains[0] else self.captains[0]
-        )
-
-    async def send_map_embed(self):
-        map_name = self.selected_map
-        file_path = f"modules/maps/{map_name}.webp"
-        team_1 = self.captains[0]
-        team_2 = self.captains[1]
-        side_1 = self.team_sides[self.captains[0].id]
-        side_2 = self.team_sides[self.captains[1].id]
-
-        file = File(file_path, filename="map.webp")
-        embed = Embed(
-            title="✅ Финальное подтверждение матча!",
-            description=(
-                f"Игра будет проходить на **{map_name}**.\n"
-                f"♦ **{team_1.display_name}** играет за **{side_1}**\n"
-                f"♣ **{team_2.display_name}** играет за **{side_2}**"
-            ),
-            color=discord.Color.green()
-        )
-        embed.set_image(url="attachment://map.webp")
-        await self.channel.send(embed=embed, file=file)
-
-    async def end_map_ban(self):
-        logger.info(f"Финальная карта: {self.selected_map}")
-        await self.choose_sides()
-
-
 class DraftView(discord.ui.View):
     def __init__(self, draft):
         super().__init__(timeout=None)
-        self.draft = draft
-
-        for player in self.draft.available_players:
-            self.add_item(PlayerButton(draft=self.draft, player=player))
-
+        for player in draft.available_players:
+            self.add_item(PlayerButton(draft, player))
 
 class PlayerButton(discord.ui.Button):
     def __init__(self, draft, player):
-        # Подгружаем профиль игрока
         super().__init__(label=player.display_name, style=discord.ButtonStyle.secondary)
         self.draft = draft
         self.player = player
@@ -221,15 +257,11 @@ class PlayerButton(discord.ui.Button):
             return
         await self.draft.pick_player(interaction, self.player)
 
-
 class MapDraftView(discord.ui.View):
     def __init__(self, draft):
         super().__init__(timeout=None)
-        self.draft = draft
-
         for map_name in draft.available_maps:
             self.add_item(MapButton(draft, map_name))
-
 
 class MapButton(discord.ui.Button):
     def __init__(self, draft, map_name):
@@ -287,16 +319,11 @@ class SideSelectView(discord.ui.View):
             team_2.id: other_side
         }
 
-        side_cases = {
-            "Атака": "Атаку",
-            "Защита": "Защиту"
-        }
-
         embed = discord.Embed(
             title="✅ Выбор сторон завершён!",
             description=(
-            f"**Команда {team_1.display_name}** играет за **{side_cases[chosen_side]}**\n"
-            f"**Команда {team_2.display_name}** играет за **{side_cases[other_side]}**"
+                f"**Команда {team_1.display_name}** играет за **{chosen_side}**\n"
+                f"**Команда {team_2.display_name}** играет за **{other_side}**"
             ),
             color=discord.Color.green()
         )
@@ -308,6 +335,5 @@ class SideSelectView(discord.ui.View):
         await self.draft.send_map_embed()
         await self.draft.create_voice_channels()
 
-
 def setup(bot):
-    pass  # пока заглушка, можно расширить в будущем
+    pass
