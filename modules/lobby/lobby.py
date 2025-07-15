@@ -8,7 +8,13 @@ from loguru import logger
 import asyncio
 import os
 
-MAX_PLAYERS = 4  # Измените при необходимости
+
+LOBBY_COUNTERS = {
+    "2x2": 0,
+    "3x3": 0,
+    "4x4": 0,
+    "5x5": 0
+}
 
 
 class JoinLobbyButton(View):
@@ -52,7 +58,7 @@ class JoinLobbyButton(View):
 
         try:
             await interaction.message.edit(
-                content=f"👥 Участники: {len(self.lobby.members)}/{MAX_PLAYERS}.",
+                content=f"👥 Участники: {len(self.lobby.members)}/{self.max_players}.",
                 view=self
             )
         except discord.NotFound:
@@ -78,7 +84,7 @@ class JoinLobbyButton(View):
 
         try:
             await self.lobby.message.edit(
-                content=f"👥 Участники: {len(self.lobby.members)}/{MAX_PLAYERS}.",
+                content=f"👥 Участники: {len(self.lobby.members)}/{self.max_players}.",
                 view=self
             )
         except discord.NotFound:
@@ -88,19 +94,22 @@ class JoinLobbyButton(View):
 class Lobby:
     count = 0
 
-    def __init__(self, guild: discord.Guild, category_id: int):
+    def __init__(self, guild: discord.Guild, category_id: int, max_players: int = 10, mode="2x2"):
+        global LOBBY_COUNTERS
         self.message = None
         self.view = None
-        Lobby.count += 1
+        self.mode = mode
+        LOBBY_COUNTERS[mode] += 1
         self.guild = guild
         self.members: list[discord.Member] = []
         self.channel: discord.TextChannel | None = None
         self.category_id = category_id
-        self.name = f"◎lobby {Lobby.count}"
+        self.name = f"✦{mode}-л{LOBBY_COUNTERS[mode]}"
         self.captains: list[discord.Member] = []
         self.draft_started = False
         self.victory_registered = False
         self.teams: list[list[discord.Member]] = [[], []]
+        self.max_players = max_players
 
     async def create_channel(self):
         try:
@@ -122,7 +131,7 @@ class Lobby:
             self.view = JoinLobbyButton(self)
             self.message = await self.channel.send(
                 f"🎮 Нажмите на кнопку ниже, чтобы присоединиться к лобби.\n"
-                f"👥 Участники: 0/{MAX_PLAYERS}.",
+                f"👥 Участники: 0/{self.max_players}.",
                 view=self.view
             )
 
@@ -135,14 +144,14 @@ class Lobby:
         if member in self.members:
             await self.channel.send(f"{member.mention}, вы уже в лобби.")
             return
-        if len(self.members) >= MAX_PLAYERS:
+        if len(self.members) >= self.max_players:
             await self.channel.send(f"{member.mention}, лобби уже заполнено.")
             return
 
         self.members.append(member)
-        await self.channel.send(f"{member.mention} присоединился к лобби ({len(self.members)}/{MAX_PLAYERS})")
+        await self.channel.send(f"{member.mention} присоединился к лобби ({len(self.members)}/{self.max_players})")
 
-        if len(self.members) >= MAX_PLAYERS and not self.draft_started:
+        if len(self.members) >= self.max_players and not self.draft_started:
             self.draft_started = True
             for item in self.view.children:
                 if isinstance(item, discord.ui.Button):
@@ -255,18 +264,54 @@ class Lobby:
             logger.error(f"❌ Ошибка при удалении текстового канала: {e}")
 
 
-class CreateLobbyButton(View):
-    def __init__(self, bot):
+class LobbyMenuView(View):
+    def __init__(self, bot: commands.Bot):
         super().__init__(timeout=None)
         self.bot = bot
 
-    @discord.ui.button(label="Создать новое лобби", style=discord.ButtonStyle.primary, emoji="🎮")
-    async def create_lobby_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
+        self.add_item(LobbySizeButton(label="2x2", size=2, bot=bot))
+        self.add_item(LobbySizeButton(label="3x3", size=3, bot=bot))
+        self.add_item(LobbySizeButton(label="4x4", size=4, bot=bot))
+        self.add_item(LobbySizeButton(label="5x5", size=5, bot=bot))
+        self.add_item(ProfileButton())
 
+class LobbySizeButton(discord.ui.Button):
+    def __init__(self, label, size, bot):
+        super().__init__(label=label, style=discord.ButtonStyle.primary)
+        self.size = size
+        self.mode = label
+        self.bot = bot
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         category_id = int(os.getenv("LOBBY_CATEGORY_ID", 0))
-        lobby_instance = Lobby(interaction.guild, category_id)
+        lobby_instance = Lobby(interaction.guild, category_id, max_players=self.size * 2, mode=self.mode)
         await lobby_instance.create_channel()
+
+class ProfileButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="👤 Профиль", style=discord.ButtonStyle.secondary)
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            profile = await api_client.get_player_profile(interaction.user.id)
+            if not profile:
+                await interaction.response.send_message("❌ Профиль не найден.", ephemeral=True)
+                return
+
+            embed = discord.Embed(
+                title=f"👤 Профиль: {interaction.user.display_name}",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="Ник", value=profile.get("username", "–"), inline=True)
+            embed.add_field(name="Ранг", value=profile.get("rank", "–"), inline=True)
+            embed.add_field(name="Победы", value=profile.get("wins", 0), inline=True)
+            embed.add_field(name="Матчи", value=profile.get("matches", 0), inline=True)
+
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except Exception as e:
+            logger.error(f"Ошибка при отображении профиля: {e}")
+            await interaction.response.send_message("❌ Не удалось загрузить профиль.", ephemeral=True)
 
 
 class PlayerProfileModal(discord.ui.Modal, title="Введите данные профиля"):
@@ -372,5 +417,5 @@ def setup(bot: commands.Bot):
         )
 
         embed.set_footer(text="Удачи и приятной игры!")
-        view = CreateLobbyButton(bot)
+        view = LobbyMenuView(bot)
         await ctx.send(embed=embed, view=view)

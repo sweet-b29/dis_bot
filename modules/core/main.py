@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 import logging
 from loguru import logger
-from modules.lobby.lobby import CreateLobbyButton
+from modules.lobby.lobby import LobbyMenuView
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
@@ -85,7 +85,7 @@ async def setup_hook():
                 )
 
                 embed.set_footer(text="Удачи в матчах! Легенды рождаются здесь.")
-                view = CreateLobbyButton(bot)
+                view = LobbyMenuView(bot)
                 await channel.send(embed=embed, view=view)
                 logger.success("📨 Отправлена кнопка создания лобби.")
         except Exception as e:
