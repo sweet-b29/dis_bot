@@ -6,6 +6,7 @@ from pathlib import Path
 import logging
 from loguru import logger
 from modules.lobby.lobby import LobbyMenuView
+from discord import File
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
@@ -69,24 +70,11 @@ async def setup_hook():
         try:
             channel = await bot.fetch_channel(channel_id)
             if channel:
-                embed = discord.Embed(
-                    title="Добро пожаловать в лобби кастомных игр",
-                    description=(
-                        "🎮 Нажми кнопку ниже, чтобы создать своё лобби и начать драфт-матч с другими игроками.\n\n"
-                        "**Как это работает:**\n"
-                        "• Собери 10 игроков\n"
-                        "• Бот выберет капитанов по рангу\n"
-                        "• Капитаны по очереди выберут игроков\n"
-                        "• Затем выберется карта и стороны\n"
-                        "• Бот создаст голосовые каналы и переместит всех автоматически\n\n"
-                        "Сражайся, побеждай и зарабатывай рейтинг!"
-                    ),
-                    color=discord.Color.dark_teal()
-                )
+                file_path = Path(__file__).resolve().parents[2] / "modules" / "pictures" / "Создание лобби.jpg"
+                file = File(fp=file_path, filename="создание_лобби.jpg")
 
-                embed.set_footer(text="Удачи в матчах! Легенды рождаются здесь.")
                 view = LobbyMenuView(bot)
-                await channel.send(embed=embed, view=view)
+                await channel.send(file=file, view=view)
                 logger.success("📨 Отправлена кнопка создания лобби.")
         except Exception as e:
             logger.warning(f"⚠ Ошибка при отправке кнопки лобби: {e}")
