@@ -58,7 +58,7 @@ class JoinLobbyButton(View):
 
         try:
             await interaction.message.edit(
-                content=f"👥 Участники: {len(self.lobby.members)}/{self.max_players}.",
+                content=f"👥 Участники: {len(self.lobby.members)}/{self.lobby.max_players}.",
                 view=self
             )
         except discord.NotFound:
@@ -84,7 +84,7 @@ class JoinLobbyButton(View):
 
         try:
             await self.lobby.message.edit(
-                content=f"👥 Участники: {len(self.lobby.members)}/{self.max_players}.",
+                content=f"👥 Участники: {len(self.lobby.members)}/{self.lobby.max_players}.",
                 view=self
             )
         except discord.NotFound:
