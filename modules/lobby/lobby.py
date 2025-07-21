@@ -7,6 +7,7 @@ from modules.lobby.draft import Draft, format_player_name
 from loguru import logger
 import asyncio
 import os
+from modules.utils.image_generator import generate_lobby_image
 
 
 LOBBY_COUNTERS = {
@@ -50,17 +51,14 @@ class JoinLobbyButton(View):
             return
 
         try:
-            await self.lobby.add_member(interaction.user)
+            await self.lobby.add_member(interaction)
         except Exception as e:
             logger.error(f"❌ Не удалось добавить в лобби: {e}")
             await interaction.followup.send("⚠ Не удалось присоединиться к лобби.", ephemeral=True)
             return
 
         try:
-            await interaction.message.edit(
-                content=f"👥 Участники: {len(self.lobby.members)}/{self.lobby.max_players}.",
-                view=self
-            )
+            await interaction.message.edit(view=self)
         except discord.NotFound:
             logger.warning("⚠ Сообщение не найдено при попытке обновления (возможно, удалено).")
             try:
@@ -79,16 +77,36 @@ class JoinLobbyButton(View):
 
         self.lobby.members.remove(interaction.user)
         await interaction.response.send_message("🚪 Вы покинули лобби.", ephemeral=True)
-
         logger.info(f"🚪 Игрок вышел из лобби: {interaction.user.display_name}")
 
-        try:
-            await self.lobby.message.edit(
-                content=f"👥 Участники: {len(self.lobby.members)}/{self.lobby.max_players}.",
-                view=self
-            )
-        except discord.NotFound:
-            logger.warning("⚠ Сообщение лобби не найдено при выходе игрока.")
+        # Получаем актуальные профили оставшихся игроков
+        players_data = []
+        for m in self.lobby.members:
+            profile = await api_client.get_player_profile(m.id)
+            players_data.append({
+                "username": profile.get("username", "—") if profile else "—",
+                "rank": profile.get("rank", "—") if profile else "—"
+            })
+
+        # 🖼️ Генерируем обновлённую картинку
+        from modules.utils.image_generator import generate_lobby_image
+        image_path = generate_lobby_image(players_data)
+
+        embed = discord.Embed(
+            title="📋 Состав лобби",
+            description="Ник и ранг текущих игроков",
+            color=discord.Color.blurple()
+        )
+        embed.set_image(url="attachment://lobby_dynamic.png")
+        file = discord.File(image_path, filename="lobby_dynamic.png")
+
+        # 🔁 Обновляем изображение в лобби
+        if self.lobby.image_message:
+            try:
+                await self.lobby.image_message.edit(embed=embed, attachments=[file])
+            except Exception as e:
+                logger.warning(f"⚠ Не удалось обновить embed после выхода: {e}")
+                self.lobby.image_message = await self.lobby.channel.send(embed=embed, file=file)
 
 
 class Lobby:
@@ -110,6 +128,7 @@ class Lobby:
         self.victory_registered = False
         self.teams: list[list[discord.Member]] = [[], []]
         self.max_players = max_players
+        self.image_message: discord.Message | None = None
 
     async def create_channel(self):
         try:
@@ -130,8 +149,7 @@ class Lobby:
 
             self.view = JoinLobbyButton(self)
             self.message = await self.channel.send(
-                f"🎮 Нажмите на кнопку ниже, чтобы присоединиться к лобби.\n"
-                f"👥 Участники: 0/{self.max_players}.",
+                f"Нажмите на кнопку ниже, чтобы присоединиться к лобби.\n",
                 view=self.view
             )
 
@@ -140,16 +158,54 @@ class Lobby:
 
         logger.info(f"🆕 Создан текстовый канал: {self.channel.name} ({self.channel.id})")
 
-    async def add_member(self, member: discord.Member):
+    async def add_member(self, interaction: discord.Interaction):
+        member = interaction.user
+
         if member in self.members:
-            await self.channel.send(f"{member.mention}, вы уже в лобби.")
-            return
-        if len(self.members) >= self.max_players:
-            await self.channel.send(f"{member.mention}, лобби уже заполнено.")
+            try:
+                await interaction.response.send_message(
+                    "❗ Вы уже в лобби. Повторное нажатие не требуется.",
+                    ephemeral=True
+                )
+            except discord.InteractionResponded:
+                await interaction.followup.send(
+                    "❗ Вы уже в лобби.",
+                    ephemeral=True
+                )
             return
 
         self.members.append(member)
-        await self.channel.send(f"{member.mention} присоединился к лобби ({len(self.members)}/{self.max_players})")
+        # await self.channel.send(f"{member.mention} присоединился к лобби ({len(self.members)}/{self.max_players})")
+
+        # Получаем профили всех участников
+        players_data = []
+        for m in self.members:
+            profile = await api_client.get_player_profile(m.id)
+            players_data.append({
+                "username": profile.get("username", "—") if profile else "—",
+                "rank": profile.get("rank", "—") if profile else "—"
+            })
+
+        # Генерируем изображение
+        image_path = generate_lobby_image(players_data)
+
+        # Создаём embed и отправляем
+        embed = discord.Embed(
+            title="📋 Состав лобби",
+            description="Ник и ранг текущих игроков",
+            color=discord.Color.blurple()
+        )
+        embed.set_image(url="attachment://lobby_dynamic.png")
+
+        file = discord.File(image_path, filename="lobby_dynamic.png")
+        if self.image_message:
+            try:
+                await self.image_message.edit(embed=embed, attachments=[file])
+            except Exception as e:
+                logger.warning(f"⚠ Не удалось обновить embed: {e}")
+                self.image_message = await self.channel.send(embed=embed, file=file)
+        else:
+            self.image_message = await self.channel.send(embed=embed, file=file)
 
         if len(self.members) >= self.max_players and not self.draft_started:
             self.draft_started = True
@@ -372,7 +428,7 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
 
         if self.lobby:
             try:
-                await self.lobby.add_member(interaction.user)
+                await self.lobby.add_member(interaction)
             except Exception as e:
                 await interaction.followup.send(
                     f"⚠ Ошибка при добавлении в лобби: {e}", ephemeral=True
