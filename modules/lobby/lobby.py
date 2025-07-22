@@ -84,13 +84,22 @@ class JoinLobbyButton(View):
         for m in self.lobby.members:
             profile = await api_client.get_player_profile(m.id)
             players_data.append({
+                "id": profile.get("id") if profile else None,
                 "username": profile.get("username", "—") if profile else "—",
-                "rank": profile.get("rank", "—") if profile else "—"
+                "rank": profile.get("rank", "—") if profile else "—",
+                "wins": profile.get("wins", 0) if profile else 0
             })
 
         # 🖼️ Генерируем обновлённую картинку
         from modules.utils.image_generator import generate_lobby_image
-        image_path = generate_lobby_image(players_data)
+        top_profiles = sorted(
+            [p for p in players_data if p.get("id")],
+            key=lambda x: x.get("wins", 0),
+            reverse=True
+        )[:3]
+        top_ids = [p["id"] for p in top_profiles]
+
+        image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
         embed = discord.Embed(
             title="📋 Состав лобби",
@@ -182,12 +191,21 @@ class Lobby:
         for m in self.members:
             profile = await api_client.get_player_profile(m.id)
             players_data.append({
+                "id": profile.get("id") if profile else None,
                 "username": profile.get("username", "—") if profile else "—",
-                "rank": profile.get("rank", "—") if profile else "—"
+                "rank": profile.get("rank", "—") if profile else "—",
+                "wins": profile.get("wins", 0) if profile else 0
             })
 
         # Генерируем изображение
-        image_path = generate_lobby_image(players_data)
+        top_profiles = sorted(
+            [p for p in players_data if p.get("id")],
+            key=lambda x: x.get("wins", 0),
+            reverse=True
+        )[:3]
+        top_ids = [p["id"] for p in top_profiles]
+
+        image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
         # Создаём embed и отправляем
         embed = discord.Embed(

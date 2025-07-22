@@ -4,6 +4,7 @@ from discord import File, Embed
 from modules.utils import api_client
 import os
 from pathlib import Path
+from modules.utils.image_generator import generate_draft_image
 
 MAX_PLAYERS = 4 # Измените при необходимости
 
@@ -87,6 +88,24 @@ class Draft:
 
         await self.draft_message.edit(embed=embed, view=None)
         logger.info("Команды сформированы.")
+
+        players_data = []
+        for member in [self.captains[0]] + self.teams[self.captains[0]]:
+            profile = await api_client.get_player_profile(member.id)
+            if profile:
+                players_data.append({"id": profile["id"], "username": profile["username"], "rank": profile["rank"],
+                                     "team": "captain_1"})
+
+        for member in [self.captains[1]] + self.teams[self.captains[1]]:
+            profile = await api_client.get_player_profile(member.id)
+            if profile:
+                players_data.append({"id": profile["id"], "username": profile["username"], "rank": profile["rank"],
+                                     "team": "captain_2"})
+
+        # Генерируем и отправляем картинку
+        image_path = generate_draft_image(players_data, captain_1_id=players_data[0]["id"],
+                                          captain_2_id=players_data[len(self.teams[self.captains[0]]) + 1]["id"])
+        await self.channel.send(file=discord.File(image_path))
         await self.start_map_draft()
 
     async def start_map_draft(self):
