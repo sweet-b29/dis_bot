@@ -170,6 +170,13 @@ class Lobby:
     async def add_member(self, interaction: discord.Interaction):
         member = interaction.user
 
+        if len(self.members) >= self.max_players:
+            await interaction.followup.send(
+                "❌ Лобби уже заполнено, вы не можете присоединиться.",
+                ephemeral=True
+            )
+            return
+
         if member in self.members:
             try:
                 await interaction.response.send_message(
@@ -184,7 +191,6 @@ class Lobby:
             return
 
         self.members.append(member)
-        # await self.channel.send(f"{member.mention} присоединился к лобби ({len(self.members)}/{self.max_players})")
 
         # Получаем профили всех участников
         players_data = []
@@ -287,7 +293,29 @@ class Lobby:
             embed.add_field(name="🎮 Игроки в лобби", value="\n".join(players_info), inline=False)
             embed.set_footer(text="Переходим к драфту игроков...")
 
-            await self.channel.send(embed=embed)
+            # 🔁 Генерация картинки финального состава
+            players_data = []
+            for m in self.captains + self.members:
+                profile = await api_client.get_player_profile(m.id)
+                players_data.append({
+                    "id": profile.get("id") if profile else None,
+                    "username": profile.get("username", "—") if profile else "—",
+                    "rank": profile.get("rank", "—") if profile else "—",
+                    "wins": profile.get("wins", 0) if profile else 0
+                })
+
+            top_profiles = sorted(
+                [p for p in players_data if p.get("id")],
+                key=lambda x: x.get("wins", 0),
+                reverse=True
+            )[:3]
+            top_ids = [p["id"] for p in top_profiles]
+
+            image_path = generate_lobby_image(players_data, top_ids=top_ids)
+            file = discord.File(image_path, filename="lobby_dynamic.png")
+            embed.set_image(url="attachment://lobby_dynamic.png")
+
+            await self.channel.send(embed=embed, file=file)
             await self.start_draft()
 
             await asyncio.sleep(30) #Переставить потом на 1200

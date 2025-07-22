@@ -91,12 +91,12 @@ def generate_draft_image(players: list[dict], captain_1_id: int, captain_2_id: i
 
     left_x = 80
     right_x = 580
-    start_y = 100
-    step_y = 80
+    start_y = 160
+    step_y = 100
 
     start_y = 160  # отступ от заголовков на картинке
-    left_x = 100
-    right_x = 560
+    left_x = 120
+    right_x = 540
 
     team_1 = [p for p in players if p["team"] == "captain_1"]
     team_2 = [p for p in players if p["team"] == "captain_2"]
