@@ -2,9 +2,7 @@ import discord
 from loguru import logger
 from discord import File, Embed
 from modules.utils import api_client
-import os
-from pathlib import Path
-from modules.utils.image_generator import generate_draft_image
+from modules.utils.image_generator import generate_draft_image, generate_map_ban_image, generate_final_match_image
 
 MAX_PLAYERS = 4 # Измените при необходимости
 
@@ -39,12 +37,9 @@ class Draft:
             overwrites[captain] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
             await self.channel.edit(overwrites=overwrites)
 
-        embed = discord.Embed(
-            title="🏆 Драфт игроков начался!",
-            description=f"Первым выбирает капитан {self.current_captain.mention}.",
-            color=discord.Color.gold()
-        )
-        self.draft_message = await self.channel.send(embed=embed, view=DraftView(self))
+        await self.channel.send(f"Ход капитана: {self.current_captain.mention}", view=DraftView(self))
+
+        self.draft_message = await self.channel.send(view=DraftView(self))
         logger.info(f"Старт драфта. Первый капитан: {self.current_captain}")
 
     async def pick_player(self, interaction: discord.Interaction, player):
@@ -58,12 +53,8 @@ class Draft:
 
         if self.available_players:
             self.switch_captain()
-            embed = discord.Embed(
-                title="🏆 Драфт продолжается",
-                description=f"Теперь выбирает капитан {self.current_captain.mention}",
-                color=discord.Color.blurple()
-            )
-            await self.draft_message.edit(embed=embed, view=DraftView(self))
+            await self.channel.send(f"Ход капитана: {self.current_captain.mention}", view=DraftView(self))
+            await self.draft_message.edit(view=DraftView(self))
             await interaction.response.defer()
         else:
             await self.end_draft()
@@ -74,19 +65,10 @@ class Draft:
             overwrites[captain] = discord.PermissionOverwrite(read_messages=True, send_messages=False)
             await self.channel.edit(overwrites=overwrites)
 
-        embed = discord.Embed(
-            title="✅ Драфт завершён",
-            description="Команды сформированы. Переходим к выбору карты.",
-            color=discord.Color.green()
-        )
-
         t1 = [await format_player_name(m) for m in [self.captains[0]] + self.teams[self.captains[0]]]
         t2 = [await format_player_name(m) for m in [self.captains[1]] + self.teams[self.captains[1]]]
 
-        embed.add_field(name=f"♦ {self.captains[0].display_name}", value="\n".join(t1), inline=True)
-        embed.add_field(name=f"♣ {self.captains[1].display_name}", value="\n".join(t2), inline=True)
-
-        await self.draft_message.edit(embed=embed, view=None)
+        await self.draft_message.edit(view=None)
         logger.info("Команды сформированы.")
 
         players_data = []
@@ -110,12 +92,12 @@ class Draft:
 
     async def start_map_draft(self):
         self.current_captain = self.captains[1]
-        embed = discord.Embed(
-            title="🌍 Драфт карт начался!",
-            description=f"Капитан {self.current_captain.mention}, выберите карту для бана.",
-            color=discord.Color.purple()
+        image_path = generate_map_ban_image(
+            available_maps=self.available_maps,
+            banned_maps=self.banned_maps,
+            current_captain=self.current_captain.display_name
         )
-        await self.channel.send(embed=embed, view=MapDraftView(self))
+        await self.channel.send(file=File(image_path), view=MapDraftView(self))
         logger.info("Начался драфт карт.")
 
     async def end_map_ban(self):
@@ -194,29 +176,17 @@ class Draft:
         self.current_captain = self.captains[1] if self.current_captain == self.captains[0] else self.captains[0]
 
     async def send_map_embed(self):
-        file_path = Path(__file__).resolve().parents[1] / "maps" / f"{self.selected_map}.webp"
-
-        embed = Embed(
-            title="✅ Финальное подтверждение матча!",
-            description=(
-                f"Игра будет проходить на **{self.selected_map}**.\n"
-                f"♦ **{self.captains[0].display_name}** играет за **{self.team_sides[self.captains[0].id]}**\n"
-                f"♣ **{self.captains[1].display_name}** играет за **{self.team_sides[self.captains[1].id]}**"
-            ),
-            color=discord.Color.green()
+        image_path = generate_final_match_image(
+            selected_map=self.selected_map,
+            team_sides=self.team_sides,
+            captains=self.captains
         )
 
-        # Проверяем, существует ли файл карты
-        if os.path.exists(file_path):
-            file = File(file_path, filename="map.webp")
-            embed.set_image(url="attachment://map.webp")
-            await self.channel.send(embed=embed, file=file)
+        if image_path and image_path.exists():
+            file = File(image_path, filename="final_match_dynamic.png")
+            await self.channel.send(file=file)
         else:
-            logger.warning(f"⚠️ Файл карты не найден: {file_path}")
-            await self.channel.send(
-                embed=embed,
-                content="⚠️ Картинка карты не найдена. Отправляем embed без изображения."
-            )
+            await self.channel.send("⚠️ Картинка карты не найдена.")
 
         await self.finalize_match()
 
@@ -303,12 +273,16 @@ class MapButton(discord.ui.Button):
             await self.draft.end_map_ban()
         else:
             self.draft.switch_captain()
-            embed = discord.Embed(
-                title="🌍 Карта забанена.",
-                description=f"Теперь банит капитан {self.draft.current_captain.mention}",
-                color=discord.Color.purple()
+            image_path = generate_map_ban_image(
+                available_maps=self.draft.available_maps,
+                banned_maps=self.draft.banned_maps,
+                current_captain=self.draft.current_captain.display_name
             )
-            await interaction.response.edit_message(embed=embed, view=MapDraftView(self.draft))
+            file = discord.File(image_path, filename="map_draft_dynamic.png")
+            embed = discord.Embed(color=discord.Color.purple())
+            embed.set_image(url="attachment://map_draft_dynamic.png")
+
+            await interaction.response.edit_message(embed=embed, view=MapDraftView(self.draft), attachments=[file])
 
 class SideSelectView(discord.ui.View):
     def __init__(self, draft: Draft, captain: discord.Member):
@@ -338,19 +312,10 @@ class SideSelectView(discord.ui.View):
             team_2.id: other_side
         }
 
-        embed = discord.Embed(
-            title="✅ Выбор сторон завершён!",
-            description=(
-                f"**Команда {team_1.display_name}** играет за **{chosen_side}**\n"
-                f"**Команда {team_2.display_name}** играет за **{other_side}**"
-            ),
-            color=discord.Color.green()
-        )
-
         for child in self.children:
             child.disabled = True
 
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.response.edit_message(view=self)
         await self.draft.send_map_embed()
         await self.draft.create_voice_channels()
 

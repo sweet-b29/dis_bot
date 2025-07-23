@@ -1,3 +1,4 @@
+import discord
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 
@@ -128,3 +129,87 @@ def generate_draft_image(players: list[dict], captain_1_id: int, captain_2_id: i
     output_path = Path(__file__).resolve().parents[1] / "pictures" / "draft_dynamic.png"
     image.save(output_path)
     return output_path
+
+def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], current_captain: str) -> Path:
+    WIDTH, HEIGHT = 1000, 700
+    PADDING = 40
+    GRID_COLS = 4
+    CELL_WIDTH = 200
+    CELL_HEIGHT = 150
+
+    MAP_ICONS_PATH = Path(__file__).resolve().parents[1] / "pictures" / "maps"
+    output_path = Path(__file__).resolve().parents[1] / "pictures" / "map_draft_dynamic.png"
+
+    image = Image.new("RGBA", (WIDTH, HEIGHT), (30, 30, 30, 255))
+    draw = ImageDraw.Draw(image)
+
+    # Заголовок
+    title_font = ImageFont.truetype(str(FONT_PATH), 42)
+    draw.text((PADDING, 20), f"🌍 Карта бана — Ход: {current_captain}", font=title_font, fill="white")
+
+    all_maps = [
+        "Ascent", "Bind", "Haven", "Split", "Icebox",
+        "Breeze", "Fracture", "Lotus", "Sunset", "Abyss", "Pearl"
+    ]
+    font = ImageFont.truetype(str(FONT_PATH), 24)
+
+    for idx, map_name in enumerate(all_maps):
+        col = idx % GRID_COLS
+        row = idx // GRID_COLS
+        x = PADDING + col * (CELL_WIDTH + 10)
+        y = 100 + row * (CELL_HEIGHT + 10)
+
+        # Иконка карты
+        icon_path = MAP_ICONS_PATH / f"{map_name}.png"
+        if not icon_path.exists():
+            icon_path = MAP_ICONS_PATH / f"{map_name}.webp"
+        if icon_path.exists():
+            try:
+                icon = Image.open(icon_path).resize((CELL_WIDTH, CELL_HEIGHT)).convert("RGBA")
+
+                # Если карта забанена — делаем иконку тёмной
+                if map_name in banned_maps:
+                    enhancer = ImageEnhance.Brightness(icon)
+                    icon = enhancer.enhance(0.3)
+
+                image.paste(icon, (x, y))
+            except Exception as e:
+                print(f"⚠ Ошибка загрузки карты {map_name}: {e}")
+
+        # Перечёркиваем, если карта забанена
+        if map_name in banned_maps:
+            draw.line((x, y, x + CELL_WIDTH, y + CELL_HEIGHT), fill="red", width=4)
+            draw.line((x, y + CELL_HEIGHT, x + CELL_WIDTH, y), fill="red", width=4)
+
+        # Название карты
+        draw.text((x + 10, y + CELL_HEIGHT - 28), map_name, font=font, fill="white")
+
+    image.save(output_path)
+    return output_path
+
+
+def generate_final_match_image(selected_map: str, team_sides: dict[int, str], captains: list[discord.Member]) -> Path:
+    # Путь к карте
+    MAP_PATH = Path(__file__).resolve().parents[1] / "maps" / f"{selected_map}.webp"
+    if not MAP_PATH.exists():
+        return None
+
+    base_img = Image.open(MAP_PATH).convert("RGBA")
+    draw = ImageDraw.Draw(base_img)
+
+    font_big = ImageFont.truetype(str(FONT_PATH), 60)
+    font_small = ImageFont.truetype(str(FONT_PATH), 42)
+
+    # Верхний текст: Название карты
+    draw.text((40, 20), f"Карта: {selected_map}", font=font_big, fill="white")
+
+    # Стороны
+    left = team_sides.get(captains[0].id, "—")
+    right = team_sides.get(captains[1].id, "—")
+
+    draw.text((40, 100), f"{captains[0].display_name} → {left}", font=font_small, fill="cyan")
+    draw.text((40, 170), f"{captains[1].display_name} → {right}", font=font_small, fill="orange")
+
+    output = Path(__file__).resolve().parents[1] / "pictures" / "final_match_dynamic.png"
+    base_img.save(output)
+    return output
