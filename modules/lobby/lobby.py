@@ -101,21 +101,16 @@ class JoinLobbyButton(View):
 
         image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
-        embed = discord.Embed(
-            title="📋 Состав лобби",
-            description="Ник и ранг текущих игроков",
-            color=discord.Color.blurple()
-        )
-        embed.set_image(url="attachment://lobby_dynamic.png")
         file = discord.File(image_path, filename="lobby_dynamic.png")
+        self.lobby.image_message = await self.lobby.channel.send(file=file)
 
         # 🔁 Обновляем изображение в лобби
         if self.lobby.image_message:
             try:
-                await self.lobby.image_message.edit(embed=embed, attachments=[file])
+                await self.lobby.image_message.edit(attachments=[file])
             except Exception as e:
                 logger.warning(f"⚠ Не удалось обновить embed после выхода: {e}")
-                self.lobby.image_message = await self.lobby.channel.send(embed=embed, file=file)
+                self.lobby.image_message = await self.lobby.channel.send(file=file)
 
 
 class Lobby:
@@ -213,23 +208,17 @@ class Lobby:
 
         image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
-        # Создаём embed и отправляем
-        embed = discord.Embed(
-            title="📋 Состав лобби",
-            description="Ник и ранг текущих игроков",
-            color=discord.Color.blurple()
-        )
-        embed.set_image(url="attachment://lobby_dynamic.png")
-
         file = discord.File(image_path, filename="lobby_dynamic.png")
+        await self.image_message.edit(attachments=[file])
+
         if self.image_message:
             try:
-                await self.image_message.edit(embed=embed, attachments=[file])
+                await self.image_message.edit(attachments=[file])
             except Exception as e:
                 logger.warning(f"⚠ Не удалось обновить embed: {e}")
-                self.image_message = await self.channel.send(embed=embed, file=file)
+                self.image_message = await self.channel.send(file=file)
         else:
-            self.image_message = await self.channel.send(embed=embed, file=file)
+            self.image_message = await self.channel.send(file=file)
 
         if len(self.members) >= self.max_players and not self.draft_started:
             self.draft_started = True
@@ -279,20 +268,6 @@ class Lobby:
             }
             await self.channel.edit(overwrites=overwrites)
 
-            embed = discord.Embed(
-                title="✖ Лобби закрыто",
-                description="Набрано максимальное количество игроков.",
-                color=discord.Color.red()
-            )
-
-            captain_1_info = await format_player_name(self.captains[0])
-            captain_2_info = await format_player_name(self.captains[1])
-            embed.add_field(name="⚔ Капитаны выбраны", value=f"♦ {captain_1_info}\n♣ {captain_2_info}", inline=False)
-
-            players_info = [f"- {await format_player_name(m)}" for m in self.members]
-            embed.add_field(name="🎮 Игроки в лобби", value="\n".join(players_info), inline=False)
-            embed.set_footer(text="Переходим к драфту игроков...")
-
             # 🔁 Генерация картинки финального состава
             players_data = []
             for m in self.captains + self.members:
@@ -313,9 +288,8 @@ class Lobby:
 
             image_path = generate_lobby_image(players_data, top_ids=top_ids)
             file = discord.File(image_path, filename="lobby_dynamic.png")
-            embed.set_image(url="attachment://lobby_dynamic.png")
 
-            await self.channel.send(embed=embed, file=file)
+            await self.channel.send(file=file)
             await self.start_draft()
 
             await asyncio.sleep(30) #Переставить потом на 1200
@@ -447,6 +421,13 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
             await interaction.response.send_message(
                 "❌ Неверный ранг. Пожалуйста, введите правильный ранг из списка:\n"
                 "Iron, Bronze, Silver, Gold, Platinum, Diamond, Ascendant, Immortal, Radiant, Unranked",
+                ephemeral=True
+            )
+            return
+
+        if len(self.lobby.members) >= self.lobby.max_players:
+            await interaction.response.send_message(
+                "❌ Лобби уже заполнено. Попробуйте позже.",
                 ephemeral=True
             )
             return

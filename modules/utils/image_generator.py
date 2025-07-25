@@ -1,5 +1,5 @@
 import discord
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from pathlib import Path
 
 # Пути к файлам
@@ -83,52 +83,58 @@ def generate_lobby_image(players: list[dict], top_ids: list[int] = []):
     return OUTPUT_IMAGE_PATH
 
 def generate_draft_image(players: list[dict], captain_1_id: int, captain_2_id: int):
+    # Картинка подложка
     DRAFT_BASE_PATH = Path(__file__).resolve().parents[1] / "pictures" / "draft_base.png"
+    output_path = Path(__file__).resolve().parents[1] / "pictures" / "draft_dynamic.png"
     image = Image.open(DRAFT_BASE_PATH).convert("RGBA")
     draw = ImageDraw.Draw(image)
 
-    title_font = ImageFont.truetype(str(FONT_PATH), 46)
-    name_font = ImageFont.truetype(str(FONT_PATH), 40)
+    # Шрифты и размеры
+    nickname_font_size = 54
+    line_spacing = 85
+    rank_size = 48
 
-    left_x = 80
-    right_x = 580
-    start_y = 160
-    step_y = 100
+    try:
+        font = ImageFont.truetype(str(FONT_PATH), nickname_font_size)
+    except:
+        font = ImageFont.load_default()
 
-    start_y = 160  # отступ от заголовков на картинке
-    left_x = 120
-    right_x = 540
-
+    # Команды
     team_1 = [p for p in players if p["team"] == "captain_1"]
     team_2 = [p for p in players if p["team"] == "captain_2"]
 
-    def draw_team(team, x, label):
-        rank_icon_offset = 320
-        for i, player in enumerate(team):
-            y = start_y + i * step_y
-            username = player.get("username", "—")
+    def draw_team(team_data, x_text, x_rank, align="left", captain_id=None):
+        total_height = len(team_data) * line_spacing
+        start_y = (image.height - total_height) // 2 + 40
+        y = start_y
+
+        for player in team_data:
+            name = player.get("username", "—")
             rank = player.get("rank", "Unranked")
-            is_captain = player["id"] == (captain_1_id if label == "captain_1" else captain_2_id)
-
-            # Если капитан — выделяем цветом
+            is_captain = player.get("id") == captain_id
             color = "gold" if is_captain else "white"
-            draw.text((x, y), username, font=name_font, fill=color)
 
-            # Иконка ранга
+            draw.text((x_text, y), name, font=font, fill=color, anchor="la" if align == "left" else "ra")
+
             icon_path = get_icon_path(rank)
             if icon_path:
                 try:
-                    icon = Image.open(icon_path).resize((56, 56)).convert("RGBA")
-                    image.paste(icon, (x + rank_icon_offset, y), icon)
+                    icon = Image.open(icon_path).resize((rank_size, rank_size)).convert("RGBA")
+                    image.paste(icon, (x_rank, y), icon)
                 except:
                     pass
 
-    draw_team(team_1, left_x, "captain_1")
-    draw_team(team_2, right_x, "captain_2")
+            y += line_spacing
 
-    output_path = Path(__file__).resolve().parents[1] / "pictures" / "draft_dynamic.png"
+    # Левая колонка
+    draw_team(team_1, x_text=80, x_rank=300, align="left", captain_id=captain_1_id)
+
+    # Правая колонка
+    draw_team(team_2, x_text=830, x_rank=730, align="right", captain_id=captain_2_id)
+
     image.save(output_path)
     return output_path
+
 
 def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], current_captain: str) -> Path:
     WIDTH, HEIGHT = 1000, 700
