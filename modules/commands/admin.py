@@ -51,6 +51,57 @@ class Admin(commands.Cog):
             ephemeral=True
         )
 
+    @app_commands.command(name="ban", description="Забанить игрока по Discord ID")
+    @app_commands.describe(
+        discord_id="ID игрока в Discord (правый клик > Copy ID)",
+        duration="Длительность бана (например: 10m, 2h, 1d)",
+        reason="Причина бана"
+    )
+    async def ban(
+        self,
+        interaction: discord.Interaction,
+        discord_id: str,
+        duration: str,
+        reason: str
+    ):
+        import datetime
+
+        await interaction.response.defer(thinking=True, ephemeral=True)
+
+        # ⏱ Конвертация длительности
+        now = datetime.datetime.now()
+        try:
+            if duration.endswith("m"):
+                delta = datetime.timedelta(minutes=int(duration[:-1]))
+            elif duration.endswith("h"):
+                delta = datetime.timedelta(hours=int(duration[:-1]))
+            elif duration.endswith("d"):
+                delta = datetime.timedelta(days=int(duration[:-1]))
+            else:
+                await interaction.followup.send("❌ Неверный формат времени. Используй m/h/d (например: 10m, 2h, 1d).")
+                return
+        except Exception:
+            await interaction.followup.send("❌ Не удалось обработать длительность.")
+            return
+
+        expires_at = now + delta
+
+        # 👤 Отправка в API
+        success = await api_client.ban_player(
+            discord_id=int(discord_id),
+            expires_at=expires_at,
+            reason=reason,
+            banned_by_id=interaction.user.id
+        )
+
+        if success:
+            await interaction.followup.send(
+                f"✅ Игрок `{discord_id}` забанен до `{expires_at.strftime('%Y-%m-%d %H:%M')}` по причине: **{reason}**"
+            )
+        else:
+            await interaction.followup.send("❌ Не удалось выдать бан. Возможно, не найден профиль.")
+
+
     @app_commands.command(name="adminhelp", description="Показать команды администратора")
     async def adminhelp(self, interaction: discord.Interaction):
         embed = discord.Embed(
@@ -61,6 +112,7 @@ class Admin(commands.Cog):
         embed.add_field(name="/changerank", value="✏ Изменить ранг игрока", inline=False)
         embed.add_field(name="/changenick", value="🔁 Изменить Riot-ник игрока", inline=False)
         embed.add_field(name="/changewins", value="🏆 Установить количество побед", inline=False)
+        embed.add_field(name="/ban", value="🔐 Забанить игрока на время", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 async def setup(bot):

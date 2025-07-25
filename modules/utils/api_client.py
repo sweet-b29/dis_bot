@@ -131,3 +131,11 @@ async def update_lobby(lobby_id: int, data: dict):
                 return await resp.json()
             except:
                 return {}
+
+
+async def is_banned(discord_id: int) -> dict:
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"{API_BASE_URL}/bans/is_banned/", params={"discord_id": discord_id}) as resp:
+            if resp.status == 200:
+                return await resp.json()
+            return {"banned": False}

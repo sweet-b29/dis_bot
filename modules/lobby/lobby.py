@@ -3,11 +3,12 @@ from discord.ext import commands
 from discord.ui import View
 import random
 from modules.utils import api_client
-from modules.lobby.draft import Draft, format_player_name
+from modules.lobby.draft import Draft
 from loguru import logger
 import asyncio
 import os
 from modules.utils.image_generator import generate_lobby_image
+from modules.utils.api_client import is_banned
 
 
 LOBBY_COUNTERS = {
@@ -45,6 +46,16 @@ class JoinLobbyButton(View):
             await interaction.response.defer(ephemeral=True)
         except discord.InteractionResponded:
             pass  # если уже ответили
+
+        ban = await is_banned(interaction.user.id)
+        if ban.get("banned"):
+            reason = ban.get("reason", "Не указана")
+            until = ban.get("expires_at", "неизвестно")
+            await interaction.followup.send(
+                f"🚫 Вы забанены до `{until}` по причине: **{reason}**.",
+                ephemeral=True
+            )
+            return
 
         if not self.lobby.channel or not self.lobby.guild.get_channel(self.lobby.channel.id):
             logger.warning("❌ Попытка взаимодействия после удаления канала.")
@@ -226,8 +237,15 @@ class Lobby:
                 if isinstance(item, discord.ui.Button):
                     item.disabled = True
             await self.message.edit(view=self.view)
-
             await self.close_lobby()
+
+        for m in list(self.members):
+            ban = await is_banned(m.id)
+            if ban.get("banned"):
+                self.members.remove(m)
+                await self.channel.send(
+                    f"⛔ {m.mention} был исключён из лобби (забанен до {ban.get('expires_at')})."
+                )
 
     async def close_lobby(self):
         self.draft_started = True

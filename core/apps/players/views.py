@@ -1,10 +1,11 @@
+from django.utils import timezone
 from loguru import logger
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.views import APIView
-from .models import Player
-from .serializers import PlayerSerializer
+from .models import Player, PlayerBan
+from .serializers import PlayerSerializer, PlayerBanSerializer
+
 
 class PlayerViewSet(viewsets.ModelViewSet):
     queryset = Player.objects.all()
@@ -84,3 +85,28 @@ class PlayerViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
+class PlayerBanViewSet(viewsets.ModelViewSet):
+    queryset = PlayerBan.objects.all()
+    serializer_class = PlayerBanSerializer
+    permission_classes = [permissions.IsAdminUser]
+
+    @action(detail=False, methods=['get'], url_path='is_banned')
+    def is_banned(self, request):
+        discord_id = request.query_params.get("discord_id")
+        if not discord_id:
+            return Response({"error": "discord_id is required"}, status=400)
+
+        try:
+            player = Player.objects.get(discord_id=discord_id)
+        except Player.DoesNotExist:
+            return Response({"banned": False})
+
+        active_ban = player.bans.filter(expires_at__gt=timezone.now()).first()
+        if active_ban:
+            return Response({
+                "banned": True,
+                "reason": active_ban.reason,
+                "expires_at": active_ban.expires_at
+            })
+
+        return Response({"banned": False})
