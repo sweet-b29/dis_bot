@@ -12,6 +12,7 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID", 0))
+LOBBY_CHANNEL_ID = int(os.getenv("LOBBY_CHANNEL_ID", 0))
 
 intents = discord.Intents.default()
 intents.members = True
@@ -59,26 +60,24 @@ async def setup_hook():
 
     # Синхронизация команд на сервере
     try:
-        await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-        logger.success("✅ Slash-команды синхронизированы с Discord")
+        guild = discord.Object(id=GUILD_ID)
+        await bot.tree.sync(guild=guild)
+        logger.success(f"✅ Slash-команды синхронизированы (guild={GUILD_ID})")
     except Exception as e:
         logger.error(f"❌ Ошибка синхронизации команд: {e}")
 
     # Отправка кнопки "Создать лобби" в канал при запуске
-    channel_id = int(os.getenv("LOBBY_CHANNEL_ID", 0))
-    if channel_id:
+    if LOBBY_CHANNEL_ID:
         try:
-            channel = await bot.fetch_channel(channel_id)
+            channel = await bot.fetch_channel(LOBBY_CHANNEL_ID)
             if channel:
-                file_path = Path(__file__).resolve().parents[2] / "modules" / "pictures" / "Создание лобби.jpg"
+                file_path = base_dir / "modules" / "pictures" / "Создание лобби.jpg"
                 file = File(fp=file_path, filename="создание_лобби.jpg")
-
                 view = LobbyMenuView(bot)
                 await channel.send(file=file, view=view)
                 logger.success("📨 Отправлена кнопка создания лобби.")
         except Exception as e:
             logger.warning(f"⚠ Ошибка при отправке кнопки лобби: {e}")
-
 
 
 if __name__ == "__main__":

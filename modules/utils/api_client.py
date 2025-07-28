@@ -2,6 +2,7 @@ import aiohttp
 import os
 from loguru import logger
 import json
+from datetime import datetime
 
 API_BASE_URL = os.getenv("DJANGO_API_URL", "http://127.0.0.1:8000/api")
 
@@ -139,3 +140,29 @@ async def is_banned(discord_id: int) -> dict:
             if resp.status == 200:
                 return await resp.json()
             return {"banned": False}
+
+
+async def ban_player(discord_id: int, expires_at: datetime, reason: str, banned_by_id: int = None):
+    profile = await get_player_profile(discord_id)
+    player_id = profile.get("id")
+
+    if not player_id:
+        logger.warning(f"⛔ Игрок с Discord ID {discord_id} не найден — бан невозможен.")
+        return False
+
+    payload = {
+        "player": player_id,
+        "reason": reason,
+        "expires_at": expires_at.isoformat(),
+        "banned_by": banned_by_id
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(f"{API_BASE_URL}/bans/", json=payload) as resp:
+            if resp.status in [200, 201]:
+                logger.success(f"✅ Бан успешно отправлен для {discord_id}")
+                return True
+            else:
+                error = await resp.text()
+                logger.error(f"❌ Не удалось выдать бан {discord_id}: {resp.status} - {error}")
+                return False

@@ -3,13 +3,13 @@ from discord.ext import commands
 from discord import app_commands
 from modules.utils import api_client
 import os
+import datetime
 
 GUILD_ID = int(os.getenv("GUILD_ID", 0))
 ALLOWED_ROLES = list(map(int, os.getenv("ALLOWED_ROLES", "").split(",")))
 
 @app_commands.guilds(discord.Object(id=GUILD_ID))
-
-class Admin(commands.Cog):
+class Admin(commands.GroupCog, name="admin"):
     def __init__(self, bot):
         self.bot = bot
 
@@ -57,19 +57,9 @@ class Admin(commands.Cog):
         duration="Длительность бана (например: 10m, 2h, 1d)",
         reason="Причина бана"
     )
-    async def ban(
-        self,
-        interaction: discord.Interaction,
-        discord_id: str,
-        duration: str,
-        reason: str
-    ):
-        import datetime
-
+    async def ban(self, interaction: discord.Interaction, discord_id: str, duration: str, reason: str):
         await interaction.response.defer(thinking=True, ephemeral=True)
 
-        # ⏱ Конвертация длительности
-        now = datetime.datetime.now()
         try:
             if duration.endswith("m"):
                 delta = datetime.timedelta(minutes=int(duration[:-1]))
@@ -78,15 +68,13 @@ class Admin(commands.Cog):
             elif duration.endswith("d"):
                 delta = datetime.timedelta(days=int(duration[:-1]))
             else:
-                await interaction.followup.send("❌ Неверный формат времени. Используй m/h/d (например: 10m, 2h, 1d).")
+                await interaction.followup.send("❌ Формат времени: 10m / 2h / 1d")
                 return
         except Exception:
             await interaction.followup.send("❌ Не удалось обработать длительность.")
             return
 
-        expires_at = now + delta
-
-        # 👤 Отправка в API
+        expires_at = datetime.datetime.now() + delta
         success = await api_client.ban_player(
             discord_id=int(discord_id),
             expires_at=expires_at,
@@ -101,18 +89,17 @@ class Admin(commands.Cog):
         else:
             await interaction.followup.send("❌ Не удалось выдать бан. Возможно, не найден профиль.")
 
-
     @app_commands.command(name="adminhelp", description="Показать команды администратора")
     async def adminhelp(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="🔧 Админ-команды",
-            description="Список доступных команд для админов/модераторов:",
+            description="Список доступных команд:",
             color=discord.Color.red()
         )
-        embed.add_field(name="/changerank", value="✏ Изменить ранг игрока", inline=False)
-        embed.add_field(name="/changenick", value="🔁 Изменить Riot-ник игрока", inline=False)
-        embed.add_field(name="/changewins", value="🏆 Установить количество побед", inline=False)
-        embed.add_field(name="/ban", value="🔐 Забанить игрока на время", inline=False)
+        embed.add_field(name="/admin changerank", value="✏ Изменить ранг", inline=False)
+        embed.add_field(name="/admin changenick", value="🔁 Изменить Riot-ник", inline=False)
+        embed.add_field(name="/admin changewins", value="🏆 Установить победы", inline=False)
+        embed.add_field(name="/admin ban", value="🔐 Забанить игрока", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 async def setup(bot):
