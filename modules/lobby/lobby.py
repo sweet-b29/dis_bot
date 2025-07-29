@@ -112,11 +112,8 @@ class JoinLobbyButton(View):
 
         image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
-        file = discord.File(image_path, filename="lobby_dynamic.png")
-        self.lobby.image_message = await self.lobby.channel.send(file=file)
-
-        # 🔁 Обновляем изображение в лобби
-        if self.lobby.image_message:
+        with open(image_path, "rb") as f:
+            file = discord.File(f, filename="lobby_dynamic.png")
             try:
                 await self.lobby.image_message.edit(attachments=[file])
             except Exception as e:
@@ -217,19 +214,18 @@ class Lobby:
         )[:3]
         top_ids = [p["id"] for p in top_profiles]
 
-        image_path = generate_lobby_image(players_data, top_ids=top_ids)
+        image_path = await generate_lobby_image(self)
 
-        file = discord.File(image_path, filename="lobby_dynamic.png")
-        await self.image_message.edit(attachments=[file])
-
-        if self.image_message:
-            try:
-                await self.image_message.edit(attachments=[file])
-            except Exception as e:
-                logger.warning(f"⚠ Не удалось обновить embed: {e}")
+        with open(image_path, "rb") as f:
+            file = discord.File(f, filename="lobby_dynamic.png")
+            if self.image_message:
+                try:
+                    await self.image_message.edit(attachments=[file])
+                except Exception as e:
+                    logger.warning(f"⚠ Не удалось обновить embed: {e}")
+                    self.image_message = await self.channel.send(file=file)
+            else:
                 self.image_message = await self.channel.send(file=file)
-        else:
-            self.image_message = await self.channel.send(file=file)
 
         if len(self.members) >= self.max_players and not self.draft_started:
             self.draft_started = True

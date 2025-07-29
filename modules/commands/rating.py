@@ -1,9 +1,9 @@
-from pathlib import Path
+import os
 import discord
 from discord.ext import commands
 from discord import app_commands
 from modules.utils import api_client
-import os
+from modules.utils.image_generator import generate_leaderboard_image
 
 # 🔐 Чтение ALLOWED_ROLES
 raw_roles = os.getenv("ALLOWED_ROLES", "")
@@ -29,81 +29,36 @@ class Rating(commands.Cog):
         await interaction.response.defer()
 
         data = await api_client.get_top10_players()
-        if not isinstance(data, list):
+        if not isinstance(data, list) or not data:
             await interaction.followup.send("❌ Не удалось загрузить таблицу лидеров.", ephemeral=True)
             return
 
-        # 📦 Генерация Embed и прикрепление баннера
-        embed = await self.build_embed(data)
+        image_path = generate_leaderboard_image(data)
+        file = discord.File(image_path, filename="leaderboard.png")
 
-        banner_path = Path(__file__).resolve().parents[2] / "modules" / "pictures" / "leaderboard.jpg"
-        if not banner_path.exists():
-            print(f"⚠ Баннер не найден по пути: {banner_path}")
-            return await interaction.followup.send("❌ Баннер не найден.", ephemeral=True)
+        view = Top10View()
 
-        banner_file = discord.File(banner_path, filename="leaderboard.jpg")
-        embed.set_image(url="attachment://leaderboard.jpg")
-
-        view = Top10View(self)
-
-        await interaction.followup.send(embed=embed, file=banner_file, view=view)
-
-    async def build_embed(self, data):
-        embed = discord.Embed(
-            title="🏆 Топ-10 игроков по победам",
-            description="",
-            color=discord.Color.orange()
-        )
-
-        medals = ["🥇", "🥈", "🥉"]
-        for i, player in enumerate(data[:3]):
-            username = player.get("username", "—")
-            discord_id = int(player.get("discord_id", 0))
-            wins = player.get("wins", 0)
-
-            name = f"{medals[i]} **{username}**"
-            value = f"<@{discord_id}> — **{wins} побед**"
-            embed.add_field(name=name, value=value, inline=False)
-
-        for player in data[3:]:
-            username = player.get("username", "—")
-            discord_id = int(player.get("discord_id", 0))
-            wins = player.get("wins", 0)
-
-            embed.add_field(
-                name=username,
-                value=f"<@{discord_id}> — {wins} побед",
-                inline=False
-            )
-
-        embed.set_footer(text="🔄 Обновите список, чтобы получить актуальные данные")
-        embed.set_image(url="attachment://leaderboard.jpg")
-        return embed
+        await interaction.followup.send(file=file, view=view)
 
 
 class Top10View(discord.ui.View):
-    def __init__(self, rating_cog):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.rating_cog = rating_cog
 
     @discord.ui.button(label="🔄 Обновить", style=discord.ButtonStyle.secondary)
     async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
 
         data = await api_client.get_top10_players()
-        if not isinstance(data, list):
+        if not isinstance(data, list) or not data:
             await interaction.followup.send("❌ Не удалось обновить список лидеров.", ephemeral=True)
             return
 
-        embed = await self.rating_cog.build_embed(data)
+        image_path = generate_leaderboard_image(data)
+        file = discord.File(image_path, filename="leaderboard.png")
 
-        banner_path = Path(__file__).resolve().parents[2] / "modules" / "pictures" / "leaderboard.jpg"
-        if banner_path.exists():
-            banner_file = discord.File(banner_path, filename="leaderboard.jpg")
-            embed.set_image(url="attachment://leaderboard.jpg")
-            await interaction.followup.send(embed=embed, file=banner_file, view=self)
-        else:
-            await interaction.followup.send("❌ Баннер не найден.", ephemeral=True)
+        await interaction.edit_original_response(attachments=[file])
+
 
 async def setup(bot):
     await bot.add_cog(Rating(bot))

@@ -219,3 +219,50 @@ def generate_final_match_image(selected_map: str, team_sides: dict[int, str], ca
     output = Path(__file__).resolve().parents[1] / "pictures" / "final_match_dynamic.png"
     base_img.save(output)
     return output
+
+def generate_leaderboard_image(players: list[dict]) -> Path:
+    base_path = Path(__file__).resolve().parents[1] / "pictures" / "leaderboard.png"
+    output_path = Path(__file__).resolve().parents[1] / "pictures" / "leaderboard_dynamic.png"
+    image = Image.open(base_path).convert("RGBA")
+    draw = ImageDraw.Draw(image)
+
+    # Настройки
+    font_path = FONT_PATH
+    font = ImageFont.truetype(str(font_path), 40)
+    icon_size = 54
+    step_y = 90
+    start_y = 180
+    number_x = 70
+    name_x = 150
+    rank_icon_x = 660
+    wins_x = 780
+
+    for idx, player in enumerate(players):
+        y = start_y + idx * step_y
+        username = player.get("username", "—")
+        rank = player.get("rank", "Unranked")
+        wins = player.get("wins", 0)
+        matches = player.get("matches", 1)
+        winrate = int(wins / matches * 100) if matches > 0 else 0
+
+        # Номер
+        draw.text((number_x, y), f"{idx+1}.", font=font, fill="white")
+
+        # Ник
+        draw.text((name_x, y), username, font=font, fill="white")
+
+        # Иконка ранга
+        icon_path = get_icon_path(rank)
+        if icon_path:
+            try:
+                icon = Image.open(icon_path).resize((icon_size, icon_size)).convert("RGBA")
+                image.paste(icon, (rank_icon_x, y), icon)
+            except Exception as e:
+                print(f"⚠ Ошибка иконки ранга: {e}")
+
+        # Победы и винрейт
+        draw.text((wins_x, y), f"{wins}W | {winrate}%", font=font, fill="white")
+
+    image.save(output_path)
+    return output_path
+
