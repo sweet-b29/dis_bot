@@ -3,18 +3,26 @@ from loguru import logger
 from datetime import datetime
 
 db_pool = None
+TEST_MODE = True
 
 async def create_db_pool(bot, database_url):
+    if TEST_MODE:
+        return 1
     global db_pool
     try:
         db_pool = await asyncpg.create_pool(database_url)
-        await init_db()
-        logger.success("✅ Подключение к БД установлено.")
+        try:
+            await init_db()
+            logger.success("✅ Подключение к базе данных установлено.")
+        except Exception as e:
+            logger.error(f"❌ Ошибка инициализации БД: {e}")
     except Exception as e:
         logger.error(f"❌ Ошибка подключения к БД: {e}")
         db_pool = None
 
 async def init_db():
+    if TEST_MODE:
+        return 1
     global db_pool
     try:
         async with db_pool.acquire() as conn:
@@ -50,6 +58,8 @@ async def init_db():
         logger.error(f"❌ Ошибка инициализации БД: {e}")
 
 async def add_win(user_id: int):
+    if TEST_MODE:
+        return 1
     global db_pool
     try:
         async with db_pool.acquire() as conn:
@@ -67,6 +77,8 @@ async def add_win(user_id: int):
         return None
 
 async def get_top10():
+    if TEST_MODE:
+        return []
     global db_pool
     try:
         async with db_pool.acquire() as conn:
@@ -83,11 +95,15 @@ async def get_top10():
         return []
 
 async def execute_query(query, *args):
+    if TEST_MODE:
+        return
     global db_pool
     async with db_pool.acquire() as connection:
         await connection.execute(query, *args)
 
 async def save_player_profile(user_id: int, username: str, rank: str, last_name_change: datetime = None):
+    if TEST_MODE:
+        return
     query = """
     INSERT INTO player_profiles (user_id, username, rank, last_name_change)
     VALUES ($1, $2, $3, $4)
@@ -98,12 +114,18 @@ async def save_player_profile(user_id: int, username: str, rank: str, last_name_
     """
     await db_pool.execute(query, user_id, username, rank, last_name_change)
 
-
 async def get_player_profile(user_id: int):
-    query = "SELECT username, rank, last_name_change FROM player_profiles WHERE user_id = $1"
-    return await db_pool.fetchrow(query, user_id)
+    if TEST_MODE:
+        return {"username": f"user_{user_id}", "rank": "Unranked"}
+
+# ⚠️ ВРЕМЕННО для турнира
+# async def get_player_profile(user_id: int):
+#     query = "SELECT username, rank, last_name_change FROM player_profiles WHERE user_id = $1"
+#     return await db_pool.fetchrow(query, user_id)
 
 async def save_lobby(channel_id: int, captain_1_id: int, captain_2_id: int):
+    if TEST_MODE:
+        return 0
     query = """
         INSERT INTO lobbies (channel_id, captain_1_id, captain_2_id)
         VALUES ($1, $2, $3)
@@ -113,6 +135,8 @@ async def save_lobby(channel_id: int, captain_1_id: int, captain_2_id: int):
     return row['lobby_id']
 
 async def set_wins(user_id: int, wins: int):
+    if TEST_MODE:
+        return
     await db_pool.execute("""
         INSERT INTO ratings (user_id, wins)
         VALUES ($1, $2)
@@ -121,6 +145,8 @@ async def set_wins(user_id: int, wins: int):
 
 
 async def get_all_profiles_with_wins():
+    if TEST_MODE:
+        return []
     return await db_pool.fetch("""
         SELECT p.user_id, p.username, p.rank, COALESCE(r.wins, 0) AS wins
         FROM player_profiles p
@@ -130,6 +156,8 @@ async def get_all_profiles_with_wins():
 
 
 async def update_lobby(lobby_id: int, team_1: list[int], team_2: list[int], winner_team: int = None):
+    if TEST_MODE:
+        return
     query = """
         UPDATE lobbies
         SET closed_at = NOW(),
@@ -142,10 +170,14 @@ async def update_lobby(lobby_id: int, team_1: list[int], team_2: list[int], winn
 
 
 async def get_match_count(user_id: int):
+    if TEST_MODE:
+        return 0
     query = "SELECT matches FROM ratings WHERE user_id = $1"
     return await db_pool.fetchval(query, user_id) or 0
 
 
 async def get_wins(user_id: int):
+    if TEST_MODE:
+        return 0
     query = "SELECT wins FROM ratings WHERE user_id = $1"
     return await db_pool.fetchval(query, user_id) or 0

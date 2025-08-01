@@ -9,7 +9,7 @@ from loguru import logger
 import asyncio
 from datetime import datetime, timedelta
 
-MAX_PLAYERS = 10 # Измените при необходимости
+MAX_PLAYERS = 2 # Измените при необходимости
 
 
 
@@ -20,21 +20,22 @@ class JoinLobbyButton(View):
 
     @discord.ui.button(label="Присоединиться к лобби", style=discord.ButtonStyle.success)
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        profile = await database.get_player_profile(interaction.user.id)
-
-        # Если профиля нет — отправляем модальное окно для регистрации
-        if profile is None:
-            modal = PlayerProfileModal(self.lobby, interaction)
-            await interaction.response.send_modal(modal)
-            return
-
-        # Профиль уже есть — сразу добавляем в лобби
-        await interaction.response.defer(ephemeral=True)
-
-        if not self.lobby.channel or not self.lobby.guild.get_channel(self.lobby.channel.id):
-            logger.warning("❌ Попытка взаимодействия после удаления канала.")
-            await interaction.followup.send("❌ Канал лобби больше не существует.", ephemeral=True)
-            return
+        # ⚠️ ВРЕМЕННО для турнира
+        # profile = await database.get_player_profile(interaction.user.id)
+        #
+        # # Если профиля нет — отправляем модальное окно для регистрации
+        # if profile is None:
+        #     modal = PlayerProfileModal(self.lobby, interaction)
+        #     await interaction.response.send_modal(modal)
+        #     return
+        #
+        # # Профиль уже есть — сразу добавляем в лобби
+        # await interaction.response.defer(ephemeral=True)
+        #
+        # if not self.lobby.channel or not self.lobby.guild.get_channel(self.lobby.channel.id):
+        #     logger.warning("❌ Попытка взаимодействия после удаления канала.")
+        #     await interaction.followup.send("❌ Канал лобби больше не существует.", ephemeral=True)
+        #     return
 
         await self.lobby.add_member(interaction.user)
 
@@ -90,6 +91,8 @@ class Lobby:
         self.draft_started = False
         self.victory_registered = False
         self.teams: list[list[discord.Member]] = [[], []]
+        # ⚠️ ВРЕМЕННО для турнира
+        self.tournament_mode = True
 
     async def create_channel(self):
         try:
@@ -187,11 +190,13 @@ class Lobby:
             self.captains = random.sample(top_players, 2)
             self.members = [m for m, _ in player_profiles if m not in self.captains]
 
-            self.lobby_id = await database.save_lobby(
-                channel_id=self.channel.id,
-                captain_1_id=self.captains[0].id,
-                captain_2_id=self.captains[1].id
-            )
+            self.lobby_id = 0
+            # ⚠️ ВРЕМЕННО для турнира
+            # await database.save_lobby(
+            #     channel_id=self.channel.id,
+            #     captain_1_id=self.captains[0].id,
+            #     captain_2_id=self.captains[1].id
+            # )
 
             # Обновление прав
             overwrites = {
@@ -218,7 +223,12 @@ class Lobby:
             embed.set_footer(text="Переходим к драфту игроков...")
 
             await self.channel.send(embed=embed)
-            await self.start_draft()
+            self.draft = Draft(self.guild, self.channel, self.captains, self.members)
+
+            if self.tournament_mode:
+                await self.draft.start_agent_ban()
+            else:
+                await self.draft.start()
 
             await asyncio.sleep(1200)
             await self.channel.send("⚔ Капитаны, подтвердите победу, нажав на кнопку ниже:", view=WinButtonView(self))
@@ -301,7 +311,7 @@ class CreateLobbyButton(View):
     async def create_lobby_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
 
-        category_id = int(os.getenv("CATEGORY_ID"))  # Указать ID нужной категории
+        category_id = int(os.getenv("LOBBY_CATEGORY_ID"))  # Указать ID нужной категории
         lobby_instance = Lobby(interaction.guild, category_id)
         await lobby_instance.create_channel()
 

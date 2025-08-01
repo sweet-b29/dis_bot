@@ -20,7 +20,7 @@ async def on_ready():
         bot.lobby_counter = 0
     logger.success(f"Бот {bot.user} успешно запущен.")
 
-    channel_id = int(os.getenv("CHANNEL_ID"))
+    channel_id = int(os.getenv("LOBBY_CHANNEL_ID"))
     channel = bot.get_channel(channel_id)
 
     if channel:
@@ -65,8 +65,7 @@ if not TOKEN:
     exit(1)
 
 if not DATABASE_URL:
-    logger.error("❌ DATABASE_URL не найден в .env")
-    exit(1)
+    logger.warning("⚠ DATABASE_URL не указан. Бот будет работать без БД.")
 
 # Настройка модулей
 lobby.setup(bot)
@@ -78,8 +77,11 @@ try:
     async def setup_hook():
         # Инициализация БД до загрузки команд
         try:
-            await database.create_db_pool(bot, DATABASE_URL)
-            logger.success("✅ Подключение к базе данных установлено.")
+            try:
+                await database.create_db_pool(bot, DATABASE_URL)
+                logger.success("✅ Подключение к базе данных установлено.")
+            except Exception as e:
+                logger.warning(f"⚠ База данных недоступна, продолжаем без неё: {e}")
         except Exception as e:
             logger.error(f"❌ Ошибка подключения к БД: {e}")
             await bot.close()
