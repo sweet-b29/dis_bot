@@ -91,8 +91,6 @@ class Lobby:
         self.draft_started = False
         self.victory_registered = False
         self.teams: list[list[discord.Member]] = [[], []]
-        # ⚠️ ВРЕМЕННО для турнира
-        self.tournament_mode = True
 
     async def create_channel(self):
         try:
@@ -225,10 +223,7 @@ class Lobby:
             await self.channel.send(embed=embed)
             self.draft = Draft(self.guild, self.channel, self.captains, self.members)
 
-            if self.tournament_mode:
-                await self.draft.start_agent_ban()
-            else:
-                await self.draft.start()
+            await self.draft.start()
 
             await asyncio.sleep(1200)
             await self.channel.send("⚔ Капитаны, подтвердите победу, нажав на кнопку ниже:", view=WinButtonView(self))
