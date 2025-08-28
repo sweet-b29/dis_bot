@@ -51,7 +51,6 @@ INSTALLED_APPS = [
     'allauth.socialaccount',
     'allauth.socialaccount.providers.discord',
     'whitenoise.runserver_nostatic',
-    'django.contrib.staticfiles',
 ]
 
 REST_FRAMEWORK = {
