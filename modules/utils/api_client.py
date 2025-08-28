@@ -2,7 +2,11 @@ import aiohttp
 import os
 from loguru import logger
 import json
-from datetime import datetime
+from datetime import datetime, timezone
+from dotenv import load_dotenv
+from pathlib import Path
+
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
 API_BASE_URL = os.getenv("DJANGO_API_URL", "http://127.0.0.1:8000/api")
 DJANGO_API_TOKEN = os.getenv("DJANGO_API_TOKEN")
@@ -133,11 +137,13 @@ async def ban_player(discord_id: int, expires_at: datetime, reason: str, banned_
         logger.warning(f"⛔ Игрок с Discord ID {discord_id} не найден — бан невозможен.")
         return False
 
+    expires_aware = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
+    expires_iso = expires_aware.astimezone(timezone.utc).isoformat()
+
     payload = {
         "player": player_id,
         "reason": reason,
-        "expires_at": expires_at.isoformat(),
-        "banned_by": banned_by_id
+        "expires_at": expires_iso
     }
 
     async with get_session() as session:

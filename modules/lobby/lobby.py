@@ -9,7 +9,7 @@ import asyncio
 import os
 from modules.utils.image_generator import generate_lobby_image
 from modules.utils.api_client import is_banned
-
+from modules.utils.utils import create_discord_file, render_ban_message
 
 LOBBY_COUNTERS = {
     "2x2": 0,
@@ -49,12 +49,14 @@ class JoinLobbyButton(View):
 
         ban = await is_banned(interaction.user.id)
         if ban.get("banned"):
-            reason = ban.get("reason", "Не указана")
-            until = ban.get("expires_at", "неизвестно")
-            await interaction.followup.send(
-                f"🚫 Вы забанены до `{until}` по причине: **{reason}**.",
-                ephemeral=True
+            text = render_ban_message(
+                expires_at_iso=ban.get("expires_at", ""),
+                reason=ban.get("reason")
             )
+            if interaction.response.is_done():
+                await interaction.followup.send(text, ephemeral=True)
+            else:
+                await interaction.response.send_message(text, ephemeral=True)
             return
 
         if not self.lobby.channel or not self.lobby.guild.get_channel(self.lobby.channel.id):
@@ -112,13 +114,16 @@ class JoinLobbyButton(View):
 
         image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
-        with open(image_path, "rb") as f:
-            file = discord.File(f, filename="lobby_dynamic.png")
-            try:
-                await self.lobby.image_message.edit(attachments=[file])
-            except Exception as e:
-                logger.warning(f"⚠ Не удалось обновить embed после выхода: {e}")
-                self.lobby.image_message = await self.lobby.channel.send(file=file)
+        file = create_discord_file(image_path)
+        try:
+            if self.lobby.image_message is None:
+                self.lobby.image_message = await self.lobby.channel.send(
+                    file=discord.File(image_path, filename=os.path.basename(image_path)))
+            else:
+                await self.lobby.image_message.edit(
+                    attachments=[discord.File(image_path, filename=os.path.basename(image_path))])
+        except Exception as e:
+            logger.warning(f"⚠ Не удалось обновить embed: {e}")
 
 
 class Lobby:
@@ -212,20 +217,20 @@ class Lobby:
             key=lambda x: x.get("wins", 0),
             reverse=True
         )[:3]
+
         top_ids = [p["id"] for p in top_profiles]
 
-        image_path = await generate_lobby_image(self)
+        image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
-        with open(image_path, "rb") as f:
-            file = discord.File(f, filename="lobby_dynamic.png")
-            if self.image_message:
-                try:
-                    await self.image_message.edit(attachments=[file])
-                except Exception as e:
-                    logger.warning(f"⚠ Не удалось обновить embed: {e}")
-                    self.image_message = await self.channel.send(file=file)
-            else:
-                self.image_message = await self.channel.send(file=file)
+        if self.image_message is None:
+            self.image_message = await self.channel.send(
+                file=discord.File(image_path, filename=os.path.basename(image_path)))
+        else:
+            try:
+                file = discord.File(image_path, filename=os.path.basename(image_path))
+                await self.image_message.edit(attachments=[file])
+            except Exception as e:
+                logger.warning(f"⚠ Не удалось обновить embed: {e}")
 
         if len(self.members) >= self.max_players and not self.draft_started:
             self.draft_started = True

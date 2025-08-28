@@ -3,6 +3,8 @@ from loguru import logger
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.permissions import IsAdminUser
 from .models import Player, PlayerBan
 from .serializers import PlayerSerializer, PlayerBanSerializer
 
@@ -89,6 +91,10 @@ class PlayerBanViewSet(viewsets.ModelViewSet):
     queryset = PlayerBan.objects.all()
     serializer_class = PlayerBanSerializer
     permission_classes = [permissions.IsAdminUser]
+    authentication_classes = [TokenAuthentication]
+
+    def perform_create(self, serializer):
+        serializer.save(banned_by=self.request.user)
 
     @action(detail=False, methods=['get'], url_path='is_banned')
     def is_banned(self, request):

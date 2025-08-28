@@ -7,6 +7,8 @@ class PlayerSerializer(serializers.ModelSerializer):
         fields = ['id', 'discord_id', 'username', 'rank', 'wins', 'matches']
 
 class PlayerBanSerializer(serializers.ModelSerializer):
+    banned_by = serializers.PrimaryKeyRelatedField(read_only=True)
     class Meta:
         model = PlayerBan
-        fields = '__all__'
+        fields = ["id", "player", "reason", "expires_at", "banned_by", "created_at"]
+        read_only_fields = ["banned_by", "created_at"]
