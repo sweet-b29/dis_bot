@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 import logging
 from loguru import logger
-from modules.lobby.lobby import LobbyMenuView
+from lobby.lobby import LobbyMenuView
 from discord import File
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
