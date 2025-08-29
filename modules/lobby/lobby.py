@@ -36,7 +36,7 @@ class JoinLobbyButton(View):
         if not profile or not profile.get("username") or not profile.get("rank"):
             try:
                 modal = PlayerProfileModal(self.lobby, interaction)
-                await interaction.response.send_modal(modal)
+                await interaction.response.send_modal(PlayerProfileModal(interaction, lobby=self))
             except Exception as e:
                 logger.exception(f"❌ Не удалось отправить модалку регистрации: {e}")
                 await interaction.response.send_message("⚠ Не удалось открыть форму регистрации.", ephemeral=True)
@@ -421,7 +421,7 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
         max_length=32
     )
 
-    def __init__(self, lobby, interaction):
+    def __init__(self, interaction: discord.Interaction, *, lobby: "Lobby | None" = None):
         super().__init__(timeout=None)
         self.lobby = lobby
         self.interaction = interaction
@@ -444,7 +444,7 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
             )
             return
 
-        if len(self.lobby.members) >= self.lobby.max_players:
+        if self.lobby and len(self.lobby.members) >= self.lobby.max_players:
             await interaction.response.send_message(
                 "❌ Лобби уже заполнено. Попробуйте позже.",
                 ephemeral=True

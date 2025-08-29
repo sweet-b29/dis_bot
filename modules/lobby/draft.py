@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from loguru import logger
 from discord import File, Embed
@@ -20,6 +21,7 @@ class Draft:
         self.available_players = [p for p in players if p not in captains]
         self.teams = {captains[0]: [], captains[1]: []}
         self.current_captain = captains[0]
+        self._lock = asyncio.Lock()
         self.draft_message = None
         self.available_maps = [
             "Ascent", "Bind", "Haven", "Split", "Icebox",
@@ -32,6 +34,7 @@ class Draft:
         self.lobby = lobby
 
     async def start(self):
+        # даём писать капитанам
         for captain in self.captains:
             overwrites = self.channel.overwrites
             overwrites[captain] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
@@ -39,23 +42,36 @@ class Draft:
 
         await self.channel.send(f"Ход капитана: {self.current_captain.mention}", view=DraftView(self))
 
-        self.draft_message = await self.channel.send(view=DraftView(self))
+        self.draft_message = await self.channel.send(
+            f"Ход капитана: {self.current_captain.mention}",
+            view=DraftView(self)
+        )
         logger.info(f"Старт драфта. Первый капитан: {self.current_captain}")
 
     async def pick_player(self, interaction: discord.Interaction, player):
-        self.teams[self.current_captain].append(player)
-        if player not in self.available_players:
-            await interaction.response.send_message("❗️ Этот игрок уже был выбран.", ephemeral=True)
-            return
+        async with self._lock:
+            # мгновенно подтверждаем интеракцию
+            if not interaction.response.is_done():
+                await interaction.response.defer()
+
+            if player not in self.available_players:
+                await interaction.followup.send("❗️ Этот игрок уже был выбран.", ephemeral=True)
+                return
 
         self.available_players.remove(player)
+        self.teams[self.current_captain].append(player)
         logger.info(f"{self.current_captain.display_name} выбрал игрока {player.display_name}")
 
         if self.available_players:
             self.switch_captain()
-            await self.channel.send(f"Ход капитана: {self.current_captain.mention}", view=DraftView(self))
-            await self.draft_message.edit(view=DraftView(self))
-            await interaction.response.defer()
+            if self.draft_message:
+                try:
+                    await self.draft_message.edit(
+                        content=f"Ход капитана: {self.current_captain.mention}",
+                        view=DraftView(self)
+                    )
+                except Exception as e:
+                    logger.warning(f"Не удалось обновить сообщение драфта: {e}")
         else:
             await self.end_draft()
 
@@ -68,8 +84,17 @@ class Draft:
         t1 = [await format_player_name(m) for m in [self.captains[0]] + self.teams[self.captains[0]]]
         t2 = [await format_player_name(m) for m in [self.captains[1]] + self.teams[self.captains[1]]]
 
-        await self.draft_message.edit(view=None)
-        logger.info("Команды сформированы.")
+        kwargs = {"view": None}
+        # если вдруг сообщение было без текста/эмбедов/аттачей — добавим текст,
+        # чтобы не получить "Cannot send an empty message".
+        if not (self.draft_message.content or self.draft_message.embeds or self.draft_message.attachments):
+            kwargs["content"] = "✅ Драфт завершён. Команды сформированы."
+
+        try:
+            await self.draft_message.edit(**kwargs)
+        except discord.HTTPException as e:
+            logger.warning(f"Не удалось отредактировать сообщение драфта: {e}. Пошлём новое.")
+            await self.channel.send("✅ Драфт завершён. Команды сформированы.")
 
         players_data = []
         for member in [self.captains[0]] + self.teams[self.captains[0]]:
@@ -97,7 +122,14 @@ class Draft:
             banned_maps=self.banned_maps,
             current_captain=self.current_captain.display_name
         )
-        await self.channel.send(file=File(image_path), view=MapDraftView(self))
+        file = discord.File(image_path, filename="map_draft_dynamic.png")
+        embed = discord.Embed(
+            title="🗺 Драфт карт",
+            description=f"Ход капитана: {self.current_captain.mention}",
+            color=discord.Color.purple()
+        )
+        embed.set_image(url="attachment://map_draft_dynamic.png")
+        await self.channel.send(embed=embed, view=MapDraftView(self), file=file)
         logger.info("Начался драфт карт.")
 
     async def end_map_ban(self):
@@ -114,63 +146,59 @@ class Draft:
         self.side_message = await self.channel.send(embed=embed, view=SideSelectView(self, self.current_captain))
 
     async def finalize_match(self):
+        """Сохраняем матч в Django. Перед этим валидируем профили всех участников."""
         try:
-            # Получаем Django ID капитанов
-            captain_1_data = await api_client.get_player_profile(self.captains[0].id)
-            captain_2_data = await api_client.get_player_profile(self.captains[1].id)
+            async def require_id(member: discord.Member) -> int | None:
+                """Возвращает Django ID игрока или None, если профиля нет."""
+                profile = await api_client.get_player_profile(member.id)
+                if profile and "id" in profile:
+                    return profile["id"]
+                # дружелюбное сообщение в канал
+                await self.channel.send(
+                    f"⚠️ {member.mention}, у тебя нет профиля в системе. "
+                    f"Открой `/profile` и заполни ник/ранг, затем запусти драфт заново."
+                )
+                return None
 
-            logger.debug(f"🔍 Discord ID капитана 1: {self.captains[0].id} ({self.captains[0].display_name})")
-            logger.debug(f"🔍 Discord ID капитана 2: {self.captains[1].id} ({self.captains[1].display_name})")
+            # Капитаны
+            captain_1_id = await require_id(self.captains[0])
+            captain_2_id = await require_id(self.captains[1])
 
-            captain_1_django_id = captain_1_data.get("id")
-            captain_2_django_id = captain_2_data.get("id")
-            if not captain_1_django_id or not captain_2_django_id:
-                logger.error("❌ Не удалось получить Django ID капитанов.")
+            # Команды
+            team_1_ids, team_2_ids = [], []
+            for m in self.teams[self.captains[0]]:
+                pid = await require_id(m)
+                if pid: team_1_ids.append(pid)
+            for m in self.teams[self.captains[1]]:
+                pid = await require_id(m)
+                if pid: team_2_ids.append(pid)
+
+            # Если кого-то нет — выходим
+            if not captain_1_id or not captain_2_id or \
+               len(team_1_ids) != len(self.teams[self.captains[0]]) or \
+               len(team_2_ids) != len(self.teams[self.captains[1]]):
+                await self.channel.send("⏸ Сохранение матча остановлено — не у всех игроков есть профиль.")
                 return
 
-            # Получаем Django ID всех игроков в командах
-            team_1_ids = [captain_1_django_id]
-            team_2_ids = [captain_2_django_id]
-
-            for member in self.teams[self.captains[0]]:
-                profile = await api_client.get_player_profile(member.id)
-                if profile and "id" in profile:
-                    team_1_ids.append(profile["id"])
-                else:
-                    logger.warning(f"❌ Не удалось получить Django ID для участника {member.display_name}")
-
-            for member in self.teams[self.captains[1]]:
-                profile = await api_client.get_player_profile(member.id)
-                if profile and "id" in profile:
-                    team_2_ids.append(profile["id"])
-                else:
-                    logger.warning(f"❌ Не удалось получить Django ID для участника {member.display_name}")
-
-            map_name = self.selected_map
-            sides = {
-                "team_1": self.team_sides.get(self.captains[0].id),
-                "team_2": self.team_sides.get(self.captains[1].id)
-            }
-
-            # Составляем payload
             match_payload = {
-                "captain_1": captain_1_django_id,
-                "captain_2": captain_2_django_id,
+                "captain_1": captain_1_id,
+                "captain_2": captain_2_id,
                 "team_1": team_1_ids,
                 "team_2": team_2_ids,
-                "map_name": map_name,
-                "sides": sides
+                "map_name": self.selected_map,
+                "sides": {
+                    "team_1": self.team_sides.get(self.captains[0].id),
+                    "team_2": self.team_sides.get(self.captains[1].id),
+                },
             }
 
-            # Отправляем его в API
             match_data = await api_client.create_match(match_payload)
-            logger.debug(f"📡 Ответ от API: {match_data}")
             self.match_id = match_data.get("id")
             self.lobby.match_id = self.match_id
-
             logger.success(f"Матч сохранён в Django: {match_data}")
         except Exception as e:
             logger.error(f"Ошибка при сохранении матча в Django: {e}")
+            await self.channel.send("❌ Не удалось сохранить матч. Логи отправлены в консоль.")
 
     def switch_captain(self):
         self.current_captain = self.captains[1] if self.current_captain == self.captains[0] else self.captains[0]
@@ -244,6 +272,16 @@ class PlayerButton(discord.ui.Button):
         if interaction.user != self.draft.current_captain:
             await interaction.response.send_message("❌ Сейчас не ваш ход выбирать.", ephemeral=True)
             return
+
+        # мгновенно отключаем кнопку, чтобы предотвратить дабл-клик
+        self.disabled = True
+        try:
+            # если это первое действие по интеракции — редактируем сообщение с этой же вьюхой
+            await interaction.response.edit_message(view=self.view)
+        except discord.InteractionResponded:
+            # если уже ответили, просто обновим сообщение
+            await interaction.message.edit(view=self.view)
+
         await self.draft.pick_player(interaction, self.player)
 
 class MapDraftView(discord.ui.View):
@@ -278,10 +316,13 @@ class MapButton(discord.ui.Button):
                 banned_maps=self.draft.banned_maps,
                 current_captain=self.draft.current_captain.display_name
             )
-            file = discord.File(image_path, filename="map_draft_dynamic.png")
-            embed = discord.Embed(color=discord.Color.purple())
-            embed.set_image(url="attachment://map_draft_dynamic.png")
 
+            embed = discord.Embed(
+                description=f"Ход капитана: {self.draft.current_captain.mention}",
+                color=discord.Color.purple()
+            )
+            embed.set_image(url="attachment://map_draft_dynamic.png")
+            file = discord.File(image_path, filename="map_draft_dynamic.png")
             await interaction.response.edit_message(embed=embed, view=MapDraftView(self.draft), attachments=[file])
 
 class SideSelectView(discord.ui.View):

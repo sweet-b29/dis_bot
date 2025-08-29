@@ -7,6 +7,7 @@ import logging
 from loguru import logger
 from modules.lobby.lobby import LobbyMenuView
 from discord import File
+from modules.utils.api_client import ensure_api_config
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
@@ -22,6 +23,18 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix=".", intents=intents)
 
+def ensure_bot_env():
+    missing = []
+    if not os.getenv("DISCORD_BOT_TOKEN"):
+        missing.append("DISCORD_BOT_TOKEN")
+    if not os.getenv("GUILD_ID"):
+        missing.append("GUILD_ID")
+    if not os.getenv("LOBBY_CHANNEL_ID"):
+        missing.append("LOBBY_CHANNEL_ID")
+    if not os.getenv("BOT_TZ"):
+        logger.warning("BOT_TZ не задан — по умолчанию будет Asia/Almaty")
+    if missing:
+        raise RuntimeError(f"ENV ошибки: отсутствуют {', '.join(missing)}")
 
 @bot.event
 async def on_ready():
@@ -81,6 +94,7 @@ async def setup_hook():
 
 
 if __name__ == "__main__":
-    # Убираем логгинг Discord, оставляем только loguru
+    ensure_api_config()
+    ensure_bot_env()
     logging.getLogger("discord.gateway").setLevel(logging.WARNING)
     bot.run(TOKEN)

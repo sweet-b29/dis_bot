@@ -15,44 +15,57 @@ HEADERS = {
     "Authorization": f"Token {DJANGO_API_TOKEN}",
 }
 
+def ensure_api_config():
+    missing = []
+    if not API_BASE_URL:
+        missing.append("DJANGO_API_URL")
+    if not DJANGO_API_TOKEN:
+        missing.append("DJANGO_API_TOKEN")
+    if missing:
+        from loguru import logger
+        raise RuntimeError(f"ENV ошибки: отсутствуют {', '.join(missing)}. "
+                           f"Проверь .env и перезапусти бота.")
+
 def api(path: str) -> str:
     # корректно склеиваем, чтобы слеши не «дублились»
     return f"{API_BASE_URL}/{path.lstrip('/')}"
 
 # Вспомогательная функция для сессий с токеном
 def get_session():
-    return aiohttp.ClientSession(headers=HEADERS)
+    timeout = aiohttp.ClientTimeout(total=10, connect=5, sock_read=10)
+    return aiohttp.ClientSession(headers=HEADERS, timeout=timeout)
 
 # --- Players ---
 
 async def get_player_profile(discord_id: int):
     async with get_session() as session:
         async with session.get(api(f"players/{discord_id}/")) as resp:
+            if resp.status == 404:
+                return {}  # тишина, профиля просто нет
             if resp.status != 200:
-                logger.warning(f"⚠ Не удалось получить профиль {discord_id}: статус {resp.status}")
+                logger.error(f"❌ Не удалось получить профиль {discord_id}: статус {resp.status}, тело={await resp.text()}")
                 return {}
-
             try:
                 return await resp.json()
             except Exception as e:
-                logger.error(f"❌ Ошибка при разборе JSON профиля {discord_id}: {e}")
+                logger.error(f"❌ Ошибка JSON профиля {discord_id}: {e}")
                 return {}
 
-async def update_player_profile(discord_id: int, username: str = None, rank: str = None, create_if_not_exist: bool = False):
+async def update_player_profile(discord_id: int, username: str | None = None, rank: str | None = None, create_if_not_exist: bool = False):
     payload = {
         "discord_id": discord_id,
         "username": username,
         "rank": rank,
-        "create_if_not_exist": str(create_if_not_exist).lower()
+        "create_if_not_exist": create_if_not_exist,
     }
-
     async with get_session() as session:
         async with session.patch(api("players/update_profile/"), json=payload) as resp:
-            logger.warning(f"📤 Ответ от update_profile: статус={resp.status}, тело={await resp.text()}")
+            body = await resp.text()
+            logger.info(f"📤 update_profile: {resp.status} {body[:300]}")
             try:
                 return await resp.json()
             except Exception as e:
-                logger.error(f"❌ Ошибка при разборе JSON: {e}")
+                logger.error(f"❌ Ошибка JSON update_profile: {e}")
                 return {}
 
 async def set_player_wins(discord_id: int, wins: int):
