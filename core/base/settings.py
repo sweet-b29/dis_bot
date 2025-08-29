@@ -140,7 +140,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'ru'
 
-TIME_ZONE = 'Asia/Almaty'
+TIME_ZONE = config("BOT_TZ", default="Europe/Kyiv")
 
 USE_I18N = True
 

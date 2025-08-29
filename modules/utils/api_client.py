@@ -11,13 +11,20 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 API_BASE_URL = os.getenv("DJANGO_API_URL")
 DJANGO_API_TOKEN = os.getenv("DJANGO_API_TOKEN")
 HEADERS = {"Authorization": f"Token {DJANGO_API_TOKEN}", "Content-Type": "application/json"}
+DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=15, connect=10, sock_read=10)
 
 _session: aiohttp.ClientSession | None = None
 
-def set_http_session(session: aiohttp.ClientSession):
-    """Вызываем из main.py один раз при старте бота."""
-    global _session
-    _session = session
+async def _safe_json(resp: aiohttp.ClientResponse) -> dict:
+    text = await resp.text()
+    try:
+        return json.loads(text)
+    except Exception as e:
+        logger.error(f"❌ Ошибка JSON ({resp.status}): {e}; raw={text[:300]}")
+        return {}
+
+def get_session():
+    return aiohttp.ClientSession(headers=HEADERS, timeout=DEFAULT_TIMEOUT)
 
 def _url(path: str) -> str:
     return API_BASE_URL.rstrip("/") + "/" + path.lstrip("/")
@@ -71,7 +78,7 @@ async def get_player_profile(discord_id: int) -> dict:
         if resp.status != 200:
             logger.error(f"GET players/{discord_id} -> {resp.status}: {await resp.text()}")
             return {}
-        return await resp.json()
+        return await _safe_json(resp)
 
 async def update_player_profile(discord_id: int, username: str | None = None, rank: str | None = None, create_if_not_exist: bool = False) -> dict:
     payload = {"discord_id": discord_id, "create_if_not_exist": create_if_not_exist}
@@ -85,7 +92,7 @@ async def update_player_profile(discord_id: int, username: str | None = None, ra
             logger.error(f"PATCH update_profile -> {resp.status}: {body[:400]}")
             raise RuntimeError(f"update_profile failed: {resp.status}")
         try:
-            return await resp.json()
+            return await _safe_json(resp)
         except Exception:
             logger.error("Bad JSON in update_profile response")
             return {}
@@ -93,19 +100,19 @@ async def update_player_profile(discord_id: int, username: str | None = None, ra
 async def set_player_wins(discord_id: int, wins: int):
     payload = {"wins": wins}
     async with await _request("POST", f"players/{discord_id}/set_wins/", json=payload) as resp:
-        return await resp.json()
+        return await _safe_json(resp)
 
 async def get_all_players():
     async with await _request("GET", "players/") as resp:
-        return await resp.json()
+        return await _safe_json(resp)
 
 async def add_win(discord_id: int):
     async with await _request("POST", f"players/{discord_id}/add_win/") as resp:
-        return await resp.json()
+        return await _safe_json(resp)
 
 async def get_top10_players():
     async with await _request("GET", "players/top10/") as resp:
-        return await resp.json() if resp.status == 200 else []
+        return await _safe_json(resp) if resp.status == 200 else []
 
 # --- Matches ---
 
@@ -124,14 +131,14 @@ async def create_match(payload: dict):
 
 async def get_all_matches():
     async with await _request("GET", "matches/") as resp:
-        return await resp.json()
+        return await _safe_json(resp)
 
 async def save_match_result(match_id: int, winner_team: int):
     payload = {"winner_team": winner_team}
     async with await _request("POST", f"matches/{match_id}/set_winner/", json=payload) as resp:
         if resp.status != 200:
             logger.error(f"❌ Ошибка при сохранении результата матча: {resp.status} - {await resp.text()}")
-        return await resp.json()
+        return await _safe_json(resp)
 
 # --- Lobbies ---
 
@@ -140,7 +147,7 @@ async def create_lobby(data: dict):
         if resp.status != 201:
             logger.warning(f"⚠ Не удалось создать лобби: {resp.status}")
             return {}
-        return await resp.json()
+        return await _safe_json(resp)
 
 async def update_lobby(lobby_id: int, data: dict):
     async with await _request("PATCH", f"lobbies/{lobby_id}/", json=data) as resp:
@@ -148,7 +155,7 @@ async def update_lobby(lobby_id: int, data: dict):
             logger.warning(f"⚠ Не удалось обновить лобби {lobby_id}: {resp.status}")
             return {}
         try:
-            return await resp.json()
+            return await _safe_json(resp)
         except:
             return {}
 
@@ -156,7 +163,7 @@ async def update_lobby(lobby_id: int, data: dict):
 
 async def is_banned(discord_id: int) -> dict:
     async with await _request("GET", "bans/is_banned/", params={"discord_id": discord_id}) as resp:
-        return await resp.json() if resp.status == 200 else {"banned": False}
+        return await _safe_json(resp) if resp.status == 200 else {"banned": False}
 
 async def ban_player(discord_id: int, expires_at: datetime, reason: str, banned_by_id: int = None):
     profile = await get_player_profile(discord_id)
