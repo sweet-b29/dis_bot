@@ -10,24 +10,27 @@ FONT_PATH = Path(__file__).resolve().parents[1] / "static" / "fonts" / "Inter-Se
 RANK_ICONS_PATH = Path(__file__).resolve().parents[1] / "pictures" / "ranks"
 MAP_ICONS_PATH = Path(__file__).resolve().parents[1] / "pictures" / "maps"
 
-@lru_cache(maxsize=4)
+CANDIDATE_FONT_PATHS = [
+    FONT_PATH,
+    Path(__file__).resolve().parents[2] / "static" / "fonts" / "Inter-SemiBold.ttf",
+    Path(__file__).resolve().parents[1] / "fonts" / "Inter-SemiBold.ttf",
+]
+
+@lru_cache(maxsize=8)
 def get_font(size: int):
-    return ImageFont.truetype(str(FONT_PATH), size)
-
-@lru_cache(maxsize=128)
-def get_map_icon(map_name: str, w: int, h: int):
-    p = MAP_ICONS_PATH / f"{map_name}.png"
-    if not p.exists():
-        p = MAP_ICONS_PATH / f"{map_name}.webp"
-    img = Image.open(p).convert("RGBA").resize((w, h))
-    return img
-
-# В generate_map_ban_image(...) замени создание Font на get_font(...)
-title_font = get_font(48)
-font = get_font(26)
-
-# и подгрузку иконок:
-icon = get_map_icon(map_name, CELL_WIDTH, CELL_HEIGHT)
+    # 1) пробуем Inter из проекта
+    for p in CANDIDATE_FONT_PATHS:
+        try:
+            if p.exists():
+                return ImageFont.truetype(str(p), size)
+        except Exception:
+            pass
+    # 2) пробуем системный DejaVuSans (обычно есть с Pillow)
+    try:
+        return ImageFont.truetype("DejaVuSans.ttf", size)
+    except Exception:
+        # 3) безопасный фоллбэк — встроенный bitmap-шрифт
+        return ImageFont.load_default()
 
 # Сопоставление "Immortal" → "Immortal_3_Rank.png"
 def get_icon_path(rank: str):
@@ -77,15 +80,15 @@ def generate_lobby_image(players: list[dict], top_ids: list[int] = []):
         rank = player.get("rank", "Unranked")
 
         # Номер игрока
-        font_number = ImageFont.truetype(str(FONT_PATH), 40)
+        font_number = get_font(40)
         draw.text((number_x, y), str(i + 1), font=font_number, fill="white")
 
         # Подбор шрифта под ник
         font_size = base_font_size
-        font = ImageFont.truetype(str(FONT_PATH), font_size)
+        font = get_font(font_size)
         while font.getlength(username) > 400 and font_size > min_font_size:
             font_size -= 2
-            font = ImageFont.truetype(str(FONT_PATH), font_size)
+            font = get_font(font_size)
 
         fill_color = "gold" if player.get("id") in top_ids else "white"
         draw.text((nickname_x, y), username, font=font, fill=fill_color)
@@ -115,10 +118,7 @@ def generate_draft_image(players: list[dict], captain_1_id: int, captain_2_id: i
     line_spacing = 85
     rank_size = 48
 
-    try:
-        font = ImageFont.truetype(str(FONT_PATH), nickname_font_size)
-    except:
-        font = ImageFont.load_default()
+    font = get_font(nickname_font_size)
 
     # Команды
     team_1 = [p for p in players if p["team"] == "captain_1"]
@@ -217,8 +217,8 @@ def generate_final_match_image(selected_map: str, team_sides: dict[int, str], ca
     base_img = Image.open(MAP_PATH).convert("RGBA")
     draw = ImageDraw.Draw(base_img)
 
-    font_big = ImageFont.truetype(str(FONT_PATH), 60)
-    font_small = ImageFont.truetype(str(FONT_PATH), 42)
+    font_big = get_font(60)
+    font_small = get_font(42)
 
     # Верхний текст: Название карты
     draw.text((40, 20), f"Карта: {selected_map}", font=font_big, fill="white")
