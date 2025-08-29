@@ -35,7 +35,7 @@ class JoinLobbyButton(View):
 
         if not profile or not profile.get("username") or not profile.get("rank"):
             try:
-                modal = PlayerProfileModal(self.lobby, interaction)
+                modal = PlayerProfileModal(interaction, lobby=self.lobby)
                 await interaction.response.send_modal(PlayerProfileModal(interaction, lobby=self))
             except Exception as e:
                 logger.exception(f"❌ Не удалось отправить модалку регистрации: {e}")

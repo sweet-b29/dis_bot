@@ -49,42 +49,55 @@ class PlayerViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['patch'], url_path='update_profile')
     def update_profile(self, request):
-        discord_id = request.data.get("discord_id")
-        username = request.data.get("username")
-        rank = request.data.get("rank")
-        create_if_not_exist = request.data.get("create_if_not_exist", False)
+        data = request.data
+        discord_id = data.get("discord_id")
+        username = data.get("username", None)
+        rank = data.get("rank", None)
+        create_if_not_exist = data.get("create_if_not_exist", False)
 
-        logger.warning(f"📥 PATCH /players/update_profile/ получен с данными: {request.data}")
+        logger.warning(f"📥 PATCH /players/update_profile/ получен с данными: {data}")
 
-        if not discord_id or not username or not rank:
-            return Response({"error": "Missing discord_id, username or rank"}, status=400)
+        if not discord_id:
+            return Response({"error": "discord_id is required"}, status=400)
+        if username is None and rank is None:
+            return Response({"error": "nothing to update (provide username or rank)"}, status=400)
 
+        # пробуем найти игрока
         try:
             player = Player.objects.get(discord_id=discord_id)
             created = False
         except Player.DoesNotExist:
-            if str(create_if_not_exist).lower() == "true":
-                player = Player(discord_id=discord_id)
+            # создаём только если разрешено и есть username
+            if str(create_if_not_exist).lower() in ("true", "1", "yes"):
+                if not username:
+                    return Response({"error": "username required to create a profile"}, status=400)
+                player = Player.objects.create(
+                    discord_id=discord_id,
+                    username=username,
+                    rank=rank or Player._meta.get_field("rank").default or "Unranked",
+                )
                 created = True
             else:
                 return Response({"error": "Player not found"}, status=404)
 
-        player.username = username
-        player.rank = rank
+        # частичное обновление
+        if username is not None:
+            player.username = username
+        if rank is not None:
+            player.rank = rank
 
         try:
             player.save()
-            logger.success(f"✅ Игрок сохранён: {player.discord_id} — {player.username} ({player.rank})")
             if created:
-                logger.success(f"✅ Создан новый игрок: {discord_id} - {username} ({rank})")
+                logger.success(f"✅ Создан новый игрок: {player.discord_id} - {player.username} ({player.rank})")
             else:
-                logger.info(f"✏ Обновлён профиль игрока: {discord_id} - {username} ({rank})")
+                logger.info(f"✏ Обновлён профиль игрока: {player.discord_id} - {player.username} ({player.rank})")
         except Exception as e:
             logger.error(f"❌ Ошибка при сохранении игрока {discord_id}: {e}")
-            return Response({"error": "Ошибка при сохранении"}, status=500)
+            return Response({"error": "save failed"}, status=500)
 
         serializer = self.get_serializer(player)
-        return Response(serializer.data)
+        return Response(serializer.data, status=201 if created else 200)
 
 
 class PlayerBanViewSet(viewsets.ModelViewSet):

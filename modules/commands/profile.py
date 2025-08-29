@@ -48,7 +48,7 @@ class EditProfileButton(discord.ui.View):
     @discord.ui.button(label="Редактировать", style=discord.ButtonStyle.primary)
     async def edit_profile(self, interaction: discord.Interaction, button: discord.ui.Button):
         from modules.lobby.lobby import PlayerProfileModal
-        modal = PlayerProfileModal(None, interaction)
+        modal = PlayerProfileModal(interaction)
         await interaction.response.send_modal(PlayerProfileModal(interaction))
 
 
