@@ -30,16 +30,37 @@ class Admin(commands.GroupCog, name="admin"):
     @app_commands.command(name="changenick", description="Изменить Riot-ник игрока")
     @app_commands.describe(user="Участник", username="Новый Riot-ник")
     async def changenick(self, interaction: discord.Interaction, user: discord.Member, username: str):
-        profile = await api_client.get_all_players()
-        if any(p['discord_id'] == user.id for p in profile):
-            await api_client.update_player_profile(user.id, username, None)
-            await interaction.response.send_message(
-                f"🔁 Ник игрока {user.mention} изменён на **{username}**.",
+        username = username.strip()
+        if not (1 <= len(username) <= 32):
+            await interaction.response.send_message("❌ Ник должен быть 1–32 символа.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        # 1) PATCH только username (без rank)
+        try:
+            await api_client.update_player_profile(
+                discord_id=user.id,
+                username=username,
+                create_if_not_exist=True
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ Не удалось обновить профиль в БД: {e}", ephemeral=True)
+            return
+
+        # 2) верифицируем чтением
+        fresh = await api_client.get_player_profile(user.id)
+        if fresh and fresh.get("username") == username:
+            await interaction.followup.send(
+                f"💾 Ник в профиле **обновлён**: {user.mention} → **{username}**.",
                 ephemeral=True
             )
         else:
-            await interaction.response.send_message(
-                f"❌ Профиль игрока {user.mention} не найден.",
+            await interaction.followup.send(
+                "⚠ Ник в профиле не изменился. Проверь Django:\n"
+                "• `players/serializers.py` — поле `username` включено в `fields` и `read_only=False`\n"
+                "• `players/views.py` — PATCH идёт с `partial=True` и без принудительного требование `rank`\n"
+                "• нет ли уникального конфликта по `username`",
                 ephemeral=True
             )
 

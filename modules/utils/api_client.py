@@ -51,21 +51,29 @@ async def get_player_profile(discord_id: int):
                 logger.error(f"❌ Ошибка JSON профиля {discord_id}: {e}")
                 return {}
 
-async def update_player_profile(discord_id: int, username: str | None = None, rank: str | None = None, create_if_not_exist: bool = False):
-    payload = {
-        "discord_id": discord_id,
-        "username": username,
-        "rank": rank,
-        "create_if_not_exist": create_if_not_exist,
-    }
+async def update_player_profile(
+    discord_id: int,
+    username: str | None = None,
+    rank: str | None = None,
+    create_if_not_exist: bool = False,
+):
+    # формируем payload БЕЗ None-полей
+    payload = {"discord_id": discord_id, "create_if_not_exist": create_if_not_exist}
+    if username is not None:
+        payload["username"] = username
+    if rank is not None:
+        payload["rank"] = rank
+
     async with get_session() as session:
         async with session.patch(api("players/update_profile/"), json=payload) as resp:
             body = await resp.text()
-            logger.info(f"📤 update_profile: {resp.status} {body[:300]}")
+            if resp.status not in (200, 201):
+                logger.error(f"❌ update_profile {resp.status}: {body[:400]}")
+                raise RuntimeError(f"update_profile failed: {resp.status}")
             try:
                 return await resp.json()
-            except Exception as e:
-                logger.error(f"❌ Ошибка JSON update_profile: {e}")
+            except Exception:
+                logger.error("❌ Некорректный JSON от update_profile")
                 return {}
 
 async def set_player_wins(discord_id: int, wins: int):
