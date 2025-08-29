@@ -61,7 +61,6 @@ REST_FRAMEWORK = {
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -91,12 +90,30 @@ WSGI_APPLICATION = 'deploy.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    "default": dj_database_url.config(
-        default=config("DATABASE_URL", default="sqlite:///db.sqlite3"),
-        conn_max_age=600,
+from decouple import config
+import dj_database_url
+
+DB_URL = config("DATABASE_URL", default="sqlite:///db.sqlite3")
+DB_CONN_MAX_AGE = config("DB_CONN_MAX_AGE", default=600, cast=int)
+DB_SSL_REQUIRE = config("DB_SSL_REQUIRE", default=False, cast=bool)
+
+# Универсально: работает и со старыми, и с новыми версиями dj-database-url
+try:
+    # новые версии поддерживают conn_max_age прямо в config()
+    default_db = dj_database_url.config(
+        default=DB_URL,
+        conn_max_age=DB_CONN_MAX_AGE,
+        ssl_require=DB_SSL_REQUIRE,
     )
-}
+except TypeError:
+    # старые версии — без параметров. Разбираем URL и добавляем поля вручную.
+    default_db = dj_database_url.parse(DB_URL)
+    default_db["CONN_MAX_AGE"] = DB_CONN_MAX_AGE
+    if DB_SSL_REQUIRE:
+        default_db["OPTIONS"] = {**default_db.get("OPTIONS", {}), "sslmode": "require"}
+
+DATABASES = {"default": default_db}
+
 
 
 # Password validation
@@ -165,4 +182,8 @@ SOCIALACCOUNT_PROVIDERS = {
         "SCOPE": ["identify", "email"],
     }
 }
+
+ALLOWED_HOSTS = [h for h in config('ALLOWED_HOSTS', default='127.0.0.1,localhost,.up.railway.app').split(',') if h]
+CSRF_TRUSTED_ORIGINS = [f"http://{h}" for h in ALLOWED_HOSTS if h and not h.startswith('.')] + \
+                       [f"https://{h}" for h in ALLOWED_HOSTS if h and not h.startswith('.')]
 

@@ -28,7 +28,7 @@ class PlayerViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='top10')
     def top10(self, request):
-        top_players = Player.objects.order_by('-wins')[:10]
+        top_players = Player.objects.order_by('-wins', '-matches')[:10]
         serializer = self.get_serializer(top_players, many=True)
         return Response(serializer.data)
 
@@ -82,9 +82,10 @@ class PlayerViewSet(viewsets.ModelViewSet):
 
         # частичное обновление
         if username is not None:
+            username = str(username).strip()
+            if not (1 <= len(username) <= 32):
+                return Response({"error": "username must be 1..32 chars"}, status=400)
             player.username = username
-        if rank is not None:
-            player.rank = rank
 
         try:
             player.save()
