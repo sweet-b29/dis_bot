@@ -40,8 +40,6 @@ class Draft:
             overwrites[captain] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
             await self.channel.edit(overwrites=overwrites)
 
-        await self.channel.send(f"Ход капитана: {self.current_captain.mention}", view=DraftView(self))
-
         self.draft_message = await self.channel.send(
             f"Ход капитана: {self.current_captain.mention}",
             view=DraftView(self)
@@ -50,7 +48,6 @@ class Draft:
 
     async def pick_player(self, interaction: discord.Interaction, player):
         async with self._lock:
-            # мгновенно подтверждаем интеракцию
             if not interaction.response.is_done():
                 await interaction.response.defer()
 
@@ -58,31 +55,29 @@ class Draft:
                 await interaction.followup.send("❗️ Этот игрок уже был выбран.", ephemeral=True)
                 return
 
-        self.available_players.remove(player)
-        self.teams[self.current_captain].append(player)
-        logger.info(f"{self.current_captain.display_name} выбрал игрока {player.display_name}")
+            # критичные операции — под локом
+            self.available_players.remove(player)
+            self.teams[self.current_captain].append(player)
+            logger.info(f"{self.current_captain.display_name} выбрал игрока {player.display_name}")
 
-        if self.available_players:
-            self.switch_captain()
-            if self.draft_message:
-                try:
-                    await self.draft_message.edit(
-                        content=f"Ход капитана: {self.current_captain.mention}",
-                        view=DraftView(self)
-                    )
-                except Exception as e:
-                    logger.warning(f"Не удалось обновить сообщение драфта: {e}")
-        else:
-            await self.end_draft()
+            if self.available_players:
+                self.switch_captain()
+                if self.draft_message:
+                    try:
+                        await self.draft_message.edit(
+                            content=f"Ход капитана: {self.current_captain.mention}",
+                            view=DraftView(self)
+                        )
+                    except Exception as e:
+                        logger.warning(f"Не удалось обновить сообщение драфта: {e}")
+            else:
+                await self.end_draft()
 
     async def end_draft(self):
         for captain in self.captains:
             overwrites = self.channel.overwrites
             overwrites[captain] = discord.PermissionOverwrite(read_messages=True, send_messages=False)
             await self.channel.edit(overwrites=overwrites)
-
-        t1 = [await format_player_name(m) for m in [self.captains[0]] + self.teams[self.captains[0]]]
-        t2 = [await format_player_name(m) for m in [self.captains[1]] + self.teams[self.captains[1]]]
 
         kwargs = {"view": None}
         # если вдруг сообщение было без текста/эмбедов/аттачей — добавим текст,
@@ -110,9 +105,29 @@ class Draft:
                                      "team": "captain_2"})
 
         # Генерируем и отправляем картинку
-        image_path = generate_draft_image(players_data, captain_1_id=players_data[0]["id"],
-                                          captain_2_id=players_data[len(self.teams[self.captains[0]]) + 1]["id"])
-        await self.channel.send(file=discord.File(image_path))
+        capt1 = await api_client.get_player_profile(self.captains[0].id) or {}
+        capt2 = await api_client.get_player_profile(self.captains[1].id) or {}
+
+        image_path = generate_draft_image(
+            players_data,
+            captain_1_id=capt1.get("id"),
+            captain_2_id=capt2.get("id"),
+        )
+
+        file = discord.File(image_path, filename="draft_dynamic.png")
+        embed = discord.Embed(title="УЧАСТНИКИ:", color=discord.Color.blurple())
+        embed.set_image(url="attachment://draft_dynamic.png")
+
+        # если draft_message ещё жив — редактируем его; иначе шлём новое
+        try:
+            if self.draft_message:
+                await self.draft_message.edit(content=None, view=None, embed=embed, attachments=[file])
+            else:
+                await self.channel.send(embed=embed, file=file)
+        except Exception as e:
+            logger.warning(f"Не удалось обновить сообщение драфта: {e}")
+            await self.channel.send(embed=embed, file=file)
+
         await self.start_map_draft()
 
     async def start_map_draft(self):
@@ -212,7 +227,9 @@ class Draft:
 
         if image_path and image_path.exists():
             file = File(image_path, filename="final_match_dynamic.png")
-            await self.channel.send(file=file)
+            embed = Embed(title="🏁 Карта и стороны", color=discord.Color.green())
+            embed.set_image(url="attachment://final_match_dynamic.png")
+            await self.channel.send(embed=embed, file=file)
         else:
             await self.channel.send("⚠️ Картинка карты не найдена.")
 

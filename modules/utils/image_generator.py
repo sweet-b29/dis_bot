@@ -137,11 +137,14 @@ def generate_draft_image(players: list[dict], captain_1_id: int, captain_2_id: i
 
 
 def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], current_captain: str) -> Path:
-    WIDTH, HEIGHT = 1000, 700
+    WIDTH, HEIGHT = 1280, 720
     PADDING = 40
     GRID_COLS = 4
-    CELL_WIDTH = 200
-    CELL_HEIGHT = 150
+    GRID_HGAP = 16
+    GRID_VGAP = 16
+    CELL_WIDTH = (WIDTH - PADDING*2 - GRID_HGAP*(GRID_COLS-1)) // GRID_COLS
+    CELL_HEIGHT = 160
+    TITLE_Y = 24
 
     MAP_ICONS_PATH = Path(__file__).resolve().parents[1] / "pictures" / "maps"
     output_path = Path(__file__).resolve().parents[1] / "pictures" / "map_draft_dynamic.png"
@@ -149,46 +152,35 @@ def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], cu
     image = Image.new("RGBA", (WIDTH, HEIGHT), (30, 30, 30, 255))
     draw = ImageDraw.Draw(image)
 
-    # Заголовок
-    title_font = ImageFont.truetype(str(FONT_PATH), 42)
-    draw.text((PADDING, 20), f"🌍 Карта бана — Ход: {current_captain}", font=title_font, fill="white")
+    title_font = ImageFont.truetype(str(FONT_PATH), 48)
+    draw.text((PADDING, TITLE_Y), f"🌍 Карта бана — Ход: {current_captain}", font=title_font, fill="white")
 
-    all_maps = [
-        "Ascent", "Bind", "Haven", "Split", "Icebox",
-        "Breeze", "Fracture", "Lotus", "Sunset", "Abyss", "Pearl"
-    ]
-    font = ImageFont.truetype(str(FONT_PATH), 24)
+    all_maps = ["Ascent","Bind","Haven","Split","Icebox","Breeze","Fracture","Lotus","Sunset","Abyss","Pearl"]
+    font = ImageFont.truetype(str(FONT_PATH), 26)
 
     for idx, map_name in enumerate(all_maps):
         col = idx % GRID_COLS
         row = idx // GRID_COLS
-        x = PADDING + col * (CELL_WIDTH + 10)
-        y = 100 + row * (CELL_HEIGHT + 10)
+        x = PADDING + col * (CELL_WIDTH + GRID_HGAP)
+        y = 120 + row * (CELL_HEIGHT + GRID_VGAP)
 
-        # Иконка карты
         icon_path = MAP_ICONS_PATH / f"{map_name}.png"
         if not icon_path.exists():
             icon_path = MAP_ICONS_PATH / f"{map_name}.webp"
         if icon_path.exists():
             try:
                 icon = Image.open(icon_path).resize((CELL_WIDTH, CELL_HEIGHT)).convert("RGBA")
-
-                # Если карта забанена — делаем иконку тёмной
                 if map_name in banned_maps:
-                    enhancer = ImageEnhance.Brightness(icon)
-                    icon = enhancer.enhance(0.3)
-
+                    icon = ImageEnhance.Brightness(icon).enhance(0.3)
                 image.paste(icon, (x, y))
             except Exception as e:
                 print(f"⚠ Ошибка загрузки карты {map_name}: {e}")
 
-        # Перечёркиваем, если карта забанена
         if map_name in banned_maps:
-            draw.line((x, y, x + CELL_WIDTH, y + CELL_HEIGHT), fill="red", width=4)
-            draw.line((x, y + CELL_HEIGHT, x + CELL_WIDTH, y), fill="red", width=4)
+            draw.line((x, y, x + CELL_WIDTH, y + CELL_HEIGHT), fill="red", width=5)
+            draw.line((x, y + CELL_HEIGHT, x + CELL_WIDTH, y), fill="red", width=5)
 
-        # Название карты
-        draw.text((x + 10, y + CELL_HEIGHT - 28), map_name, font=font, fill="white")
+        draw.text((x + 12, y + CELL_HEIGHT - 30), map_name, font=font, fill="white")
 
     image.save(output_path)
     return output_path

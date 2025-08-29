@@ -49,7 +49,7 @@ class EditProfileButton(discord.ui.View):
     async def edit_profile(self, interaction: discord.Interaction, button: discord.ui.Button):
         from modules.lobby.lobby import PlayerProfileModal
         modal = PlayerProfileModal(interaction)
-        await interaction.response.send_modal(PlayerProfileModal(interaction))
+        await interaction.response.send_modal(modal)
 
 
 async def setup(bot):

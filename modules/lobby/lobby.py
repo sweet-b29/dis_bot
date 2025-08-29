@@ -36,7 +36,7 @@ class JoinLobbyButton(View):
         if not profile or not profile.get("username") or not profile.get("rank"):
             try:
                 modal = PlayerProfileModal(interaction, lobby=self.lobby)
-                await interaction.response.send_modal(PlayerProfileModal(interaction, lobby=self))
+                await interaction.response.send_modal(modal)
             except Exception as e:
                 logger.exception(f"❌ Не удалось отправить модалку регистрации: {e}")
                 await interaction.response.send_message("⚠ Не удалось открыть форму регистрации.", ephemeral=True)
@@ -84,17 +84,19 @@ class JoinLobbyButton(View):
 
     @discord.ui.button(label="Выйти из лобби", style=discord.ButtonStyle.danger)
     async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user not in self.lobby.members:
+        lobby = self.lobby
+
+        if interaction.user not in lobby.members:
             await interaction.response.send_message("❗️ Вы не в лобби.", ephemeral=True)
             return
 
-        self.lobby.members.remove(interaction.user)
+        lobby.members.remove(interaction.user)
         await interaction.response.send_message("🚪 Вы покинули лобби.", ephemeral=True)
         logger.info(f"🚪 Игрок вышел из лобби: {interaction.user.display_name}")
 
-        # Получаем актуальные профили оставшихся игроков
+        # Собираем профили оставшихся игроков
         players_data = []
-        for m in self.lobby.members:
+        for m in lobby.members:
             profile = await api_client.get_player_profile(m.id)
             players_data.append({
                 "id": profile.get("id") if profile else None,
@@ -103,8 +105,7 @@ class JoinLobbyButton(View):
                 "wins": profile.get("wins", 0) if profile else 0
             })
 
-        # 🖼️ Генерируем обновлённую картинку
-        from modules.utils.image_generator import generate_lobby_image
+        # Топ по победам
         top_profiles = sorted(
             [p for p in players_data if p.get("id")],
             key=lambda x: x.get("wins", 0),
@@ -114,14 +115,15 @@ class JoinLobbyButton(View):
 
         image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
-        file = create_discord_file(image_path)
         try:
-            if self.lobby.image_message is None:
-                self.lobby.image_message = await self.lobby.channel.send(
-                    file=discord.File(image_path, filename=os.path.basename(image_path)))
+            file = discord.File(image_path, filename="lobby_dynamic.png")
+            embed = discord.Embed(color=discord.Color.purple())
+            embed.set_image(url="attachment://lobby_dynamic.png")
+
+            if lobby.image_message is None:
+                lobby.image_message = await lobby.channel.send(embed=embed, file=file)
             else:
-                await self.lobby.image_message.edit(
-                    attachments=[discord.File(image_path, filename=os.path.basename(image_path))])
+                await lobby.image_message.edit(embed=embed, attachments=[file])
         except Exception as e:
             logger.warning(f"⚠ Не удалось обновить embed: {e}")
 
@@ -222,15 +224,14 @@ class Lobby:
 
         image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
+        file = discord.File(image_path, filename="lobby_dynamic.png")
+        embed = discord.Embed(color=discord.Color.purple())
+        embed.set_image(url="attachment://lobby_dynamic.png")
+
         if self.image_message is None:
-            self.image_message = await self.channel.send(
-                file=discord.File(image_path, filename=os.path.basename(image_path)))
+            self.image_message = await self.channel.send(embed=embed, file=file)
         else:
-            try:
-                file = discord.File(image_path, filename=os.path.basename(image_path))
-                await self.image_message.edit(attachments=[file])
-            except Exception as e:
-                logger.warning(f"⚠ Не удалось обновить embed: {e}")
+            await self.image_message.edit(embed=embed, attachments=[file])
 
         if len(self.members) >= self.max_players and not self.draft_started:
             self.draft_started = True
@@ -308,7 +309,14 @@ class Lobby:
             image_path = generate_lobby_image(players_data, top_ids=top_ids)
             file = discord.File(image_path, filename="lobby_dynamic.png")
 
-            await self.channel.send(file=file)
+            embed = discord.Embed(color=discord.Color.purple())
+            embed.set_image(url="attachment://lobby_dynamic.png")
+
+            if self.image_message is None:
+                self.image_message = await self.channel.send(embed=embed, file=file)
+            else:
+                await self.image_message.edit(embed=embed, attachments=[file])
+
             await self.start_draft()
 
             await asyncio.sleep(30) #Переставить потом на 1200
@@ -421,7 +429,7 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
         max_length=32
     )
 
-    def __init__(self, interaction: discord.Interaction, *, lobby: "Lobby | None" = None):
+    def __init__(self, interaction: discord.Interaction, *, lobby: "Lobby|None" = None):
         super().__init__(timeout=None)
         self.lobby = lobby
         self.interaction = interaction
@@ -429,6 +437,7 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
     async def on_submit(self, interaction: discord.Interaction):
         username = self.username.value.strip()
         rank = self.rank.value.strip().capitalize()
+        lobby = self.lobby if hasattr(self.lobby, "members") else None
 
         valid_ranks = [
             "Iron", "Bronze", "Silver", "Gold",
@@ -444,11 +453,8 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
             )
             return
 
-        if self.lobby and len(self.lobby.members) >= self.lobby.max_players:
-            await interaction.response.send_message(
-                "❌ Лобби уже заполнено. Попробуйте позже.",
-                ephemeral=True
-            )
+        if lobby and len(lobby.members) >= lobby.max_players:
+            await interaction.response.send_message("❌ Лобби уже заполнено.", ephemeral=True)
             return
 
         try:
@@ -479,6 +485,9 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
                 await interaction.followup.send(
                     f"⚠ Ошибка при добавлении в лобби: {e}", ephemeral=True
                 )
+
+        if lobby:
+            await lobby.add_member(interaction)
 
 
 class WinButtonView(discord.ui.View):
