@@ -1,12 +1,33 @@
 import discord
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from pathlib import Path
+from functools import lru_cache
 
 # Пути к файлам
 BASE_IMAGE_PATH = Path(__file__).resolve().parents[1] / "pictures" / "lobby_base.png"
 OUTPUT_IMAGE_PATH = Path(__file__).resolve().parents[1] / "pictures" / "lobby_dynamic.png"
-FONT_PATH = Path(__file__).resolve().parents[1] / "pictures" / "Montserrat-Bold.ttf"
+FONT_PATH = Path(__file__).resolve().parents[1] / "static" / "fonts" / "Inter-SemiBold.ttf"
 RANK_ICONS_PATH = Path(__file__).resolve().parents[1] / "pictures" / "ranks"
+MAP_ICONS_PATH = Path(__file__).resolve().parents[1] / "pictures" / "maps"
+
+@lru_cache(maxsize=4)
+def get_font(size: int):
+    return ImageFont.truetype(str(FONT_PATH), size)
+
+@lru_cache(maxsize=128)
+def get_map_icon(map_name: str, w: int, h: int):
+    p = MAP_ICONS_PATH / f"{map_name}.png"
+    if not p.exists():
+        p = MAP_ICONS_PATH / f"{map_name}.webp"
+    img = Image.open(p).convert("RGBA").resize((w, h))
+    return img
+
+# В generate_map_ban_image(...) замени создание Font на get_font(...)
+title_font = get_font(48)
+font = get_font(26)
+
+# и подгрузку иконок:
+icon = get_map_icon(map_name, CELL_WIDTH, CELL_HEIGHT)
 
 # Сопоставление "Immortal" → "Immortal_3_Rank.png"
 def get_icon_path(rank: str):
@@ -152,11 +173,12 @@ def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], cu
     image = Image.new("RGBA", (WIDTH, HEIGHT), (30, 30, 30, 255))
     draw = ImageDraw.Draw(image)
 
-    title_font = ImageFont.truetype(str(FONT_PATH), 48)
+    title_font = get_font(48)
     draw.text((PADDING, TITLE_Y), f"🌍 Карта бана — Ход: {current_captain}", font=title_font, fill="white")
 
     all_maps = ["Ascent","Bind","Haven","Split","Icebox","Breeze","Fracture","Lotus","Sunset","Abyss","Pearl"]
-    font = ImageFont.truetype(str(FONT_PATH), 26)
+    font = get_font(26)
+
 
     for idx, map_name in enumerate(all_maps):
         col = idx % GRID_COLS
@@ -169,7 +191,7 @@ def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], cu
             icon_path = MAP_ICONS_PATH / f"{map_name}.webp"
         if icon_path.exists():
             try:
-                icon = Image.open(icon_path).resize((CELL_WIDTH, CELL_HEIGHT)).convert("RGBA")
+                icon = get_map_icon(map_name, CELL_WIDTH, CELL_HEIGHT)
                 if map_name in banned_maps:
                     icon = ImageEnhance.Brightness(icon).enhance(0.3)
                 image.paste(icon, (x, y))

@@ -8,6 +8,8 @@ from loguru import logger
 from modules.lobby.lobby import LobbyMenuView
 from discord import File
 from modules.utils.api_client import ensure_api_config
+import aiohttp
+from modules.utils import api_client
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
@@ -71,6 +73,10 @@ async def setup_hook():
         except Exception as e:
             logger.error(f"❌ Ошибка загрузки {ext}: {e}")
 
+    timeout = aiohttp.ClientTimeout(total=10, connect=5, sock_read=10)
+    bot.http_session = aiohttp.ClientSession(timeout=timeout)
+    api_client.set_http_session(bot.http_session)
+
     # Синхронизация команд на сервере
     try:
         guild = discord.Object(id=GUILD_ID)
@@ -92,6 +98,13 @@ async def setup_hook():
         except Exception as e:
             logger.warning(f"⚠ Ошибка при отправке кнопки лобби: {e}")
 
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: Exception):
+    try:
+        await interaction.response.send_message("❌ Что-то пошло не так. Мы уже смотрим логи.", ephemeral=True)
+    except discord.InteractionResponded:
+        await interaction.followup.send("❌ Что-то пошло не так. Мы уже смотрим логи.", ephemeral=True)
+    logger.exception(f"App command error: {error}")
 
 if __name__ == "__main__":
     ensure_api_config()

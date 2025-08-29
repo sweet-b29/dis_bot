@@ -5,7 +5,7 @@ import random
 from modules.utils import api_client
 from modules.lobby.draft import Draft
 from loguru import logger
-import asyncio
+import asyncio, time
 import os
 from modules.utils.image_generator import generate_lobby_image
 from modules.utils.api_client import is_banned
@@ -18,6 +18,25 @@ LOBBY_COUNTERS = {
     "5x5": 0
 }
 
+class ProfilesCache:
+    def __init__(self, ttl: float = 60.0):
+        self.ttl = ttl
+        self._store: dict[int, tuple[float, dict]] = {}
+        self._lock = asyncio.Lock()
+
+    async def get(self, discord_id: int) -> dict:
+        now = time.time()
+        async with self._lock:
+            ts, data = self._store.get(discord_id, (0, {}))
+            if now - ts < self.ttl:
+                return data
+        # вне локов — сетевой запрос
+        data = await api_client.get_player_profile(discord_id)
+        async with self._lock:
+            self._store[discord_id] = (now, data)
+        return data
+
+profiles_cache = ProfilesCache(ttl=60.0)
 
 class JoinLobbyButton(View):
     def __init__(self, lobby):
@@ -95,14 +114,16 @@ class JoinLobbyButton(View):
         logger.info(f"🚪 Игрок вышел из лобби: {interaction.user.display_name}")
 
         # Собираем профили оставшихся игроков
+        async with asyncio.TaskGroup() as tg:
+            tasks = {m: tg.create_task(profiles_cache.get(m.id)) for m in lobby.members}
         players_data = []
-        for m in lobby.members:
-            profile = await api_client.get_player_profile(m.id)
+        for m, t in tasks.items():
+            profile = t.result() or {}
             players_data.append({
-                "id": profile.get("id") if profile else None,
-                "username": profile.get("username", "—") if profile else "—",
-                "rank": profile.get("rank", "—") if profile else "—",
-                "wins": profile.get("wins", 0) if profile else 0
+                "id": profile.get("id"),
+                "username": profile.get("username", "—"),
+                "rank": profile.get("rank", "—"),
+                "wins": profile.get("wins", 0),
             })
 
         # Топ по победам
@@ -205,7 +226,7 @@ class Lobby:
         # Получаем профили всех участников
         players_data = []
         for m in self.members:
-            profile = await api_client.get_player_profile(m.id)
+            profile = await profiles_cache.get(m.id)
             players_data.append({
                 "id": profile.get("id") if profile else None,
                 "username": profile.get("username", "—") if profile else "—",
@@ -264,10 +285,12 @@ class Lobby:
                 "Iron": 2, "Unranked": 1
             }
 
+            async with asyncio.TaskGroup() as tg:
+                tasks = {m: tg.create_task(profiles_cache.get(m.id)) for m in self.members}
             player_profiles = []
-            for member in self.members:
-                profile = await api_client.get_player_profile(member.id)
-                rank = profile.get("rank", "Unranked") if profile else "Unranked"
+            for member, task in tasks.items():
+                profile = task.result() or {}
+                rank = profile.get("rank", "Unranked")
                 player_profiles.append((member, rank))
 
             # Сортируем по убыванию ранга
@@ -291,7 +314,7 @@ class Lobby:
             # 🔁 Генерация картинки финального состава
             players_data = []
             for m in self.captains + self.members:
-                profile = await api_client.get_player_profile(m.id)
+                profile = await profiles_cache.get(m.id)
                 players_data.append({
                     "id": profile.get("id") if profile else None,
                     "username": profile.get("username", "—") if profile else "—",
@@ -478,16 +501,13 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
             ephemeral=True
         )
 
-        if self.lobby:
+        if lobby:
             try:
-                await self.lobby.add_member(interaction)
+                await lobby.add_member(interaction)
             except Exception as e:
                 await interaction.followup.send(
                     f"⚠ Ошибка при добавлении в лобби: {e}", ephemeral=True
                 )
-
-        if lobby:
-            await lobby.add_member(interaction)
 
 
 class WinButtonView(discord.ui.View):
