@@ -53,29 +53,40 @@ async def _safe_json(resp: aiohttp.ClientResponse) -> dict:
         return {}
 
 async def _request(method: str, url: str, **kwargs):
-    """Запрос с экспоненциальными ретраями на сетевые ошибки и 429/5xx."""
+    """Возвращает ОТКРЫТЫЙ aiohttp.ClientResponse (caller читает и закрывает).
+    Делает экспоненциальные ретраи на 429/5xx и сетевых ошибках.
+    """
     retries = kwargs.pop("retries", 3)
     backoff = kwargs.pop("backoff", 0.5)
+
     async with get_session() as session:
+        resp: aiohttp.ClientResponse | None = None
         for attempt in range(retries + 1):
             try:
-                async with session.request(method, url, **kwargs) as resp:
-                    # ретраим тяжёлые статусы
-                    if resp.status == 429 or 500 <= resp.status < 600:
+                resp = await session.request(method, url, **kwargs)  # <= БЕЗ async with
+                # ретраим тяжёлые статусы
+                if resp.status == 429 or 500 <= resp.status < 600:
+                    body = ""
+                    try:
                         body = await resp.text()
-                        wait = resp.headers.get("Retry-After")
-                        wait_s = float(wait) if wait else backoff * (2 ** attempt)
-                        logger.warning(f"{method} {url} -> {resp.status}, retry in {wait_s:.2f}s; body={body[:160]}")
-                        if attempt < retries:
-                            await asyncio.sleep(min(wait_s, 5.0))
-                            continue
-                    return resp
+                    except Exception:
+                        pass
+                    wait = resp.headers.get("Retry-After")
+                    wait_s = float(wait) if wait else backoff * (2 ** attempt)
+                    logger.warning(f"{method} {url} -> {resp.status}, retry in {wait_s:.2f}s; body={body[:160]}")
+                    # освобождаем ответ перед следующей попыткой
+                    resp.release()
+                    if attempt < retries:
+                        await asyncio.sleep(min(wait_s, 5.0))
+                        continue
+                return resp  # <-- Открытый resp; дальше его читает _safe_json()
             except aiohttp.ClientError as e:
                 logger.warning(f"{method} {url} network error: {e}")
+                if resp is not None:
+                    resp.release()
                 if attempt < retries:
                     await asyncio.sleep(backoff * (2 ** attempt))
                     continue
-                # последняя попытка провалилась — возвращаем None, но НЕ бросаем исключение
                 return None
 
 def ensure_api_config():
@@ -221,28 +232,45 @@ async def is_banned(discord_id: int) -> dict:
         return {"banned": False}
     return await _safe_json(resp)
 
-async def ban_player(discord_id: int, expires_at: datetime, reason: str, banned_by_id: int = None):
+async def ban_player(discord_id: int, expires_at: datetime, reason: str, banned_by_id: int | None = None) -> bool:
+    # 1) получаем профиль (функция уже безопасная и не кидает исключения)
     profile = await get_player_profile(discord_id)
     player_id = profile.get("id")
-
     if not player_id:
         logger.warning(f"⛔ Игрок с Discord ID {discord_id} не найден — бан невозможен.")
         return False
 
+    # 2) нормализуем время в UTC ISO8601
     expires_aware = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
     expires_iso = expires_aware.astimezone(timezone.utc).isoformat()
 
     payload = {
         "player": player_id,
         "reason": reason,
-        "expires_at": expires_iso
+        "expires_at": expires_iso,
     }
+    # если на бэке есть поле — отправляем; если нет, можно оставить, оно будет проигнорировано
+    if banned_by_id is not None:
+        payload["banned_by"] = banned_by_id
 
-    async with await _request("POST", "bans/", json=payload) as resp:
-        if resp.status in [200, 201]:
+    # 3) делаем запрос через _request (ВОЗВРАЩАЕТ ОТКРЫТЫЙ resp), НО БЕЗ async with
+    resp = await _request("POST", api("bans/"), headers=HEADERS, json=payload)
+    if resp is None:
+        logger.error(f"❌ Сеть недоступна — бан {discord_id} не отправлен.")
+        return False
+
+    # 4) читаем тело и логируем, не падая на ошибках сети
+    try:
+        ok = resp.status in (200, 201)
+        if ok:
             logger.success(f"✅ Бан успешно отправлен для {discord_id}")
+            # можно прочитать ответ, если нужно:
+            # _ = await _safe_json(resp)
             return True
         else:
-            error = await resp.text()
-            logger.error(f"❌ Не удалось выдать бан {discord_id}: {resp.status} - {error}")
+            body = await resp.text()
+            logger.error(f"❌ Не удалось выдать бан {discord_id}: {resp.status} - {body[:400]}")
             return False
+    except Exception as e:
+        logger.warning(f"⚠ Ошибка чтения ответа при бане {discord_id}: {e}")
+        return False
