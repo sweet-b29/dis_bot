@@ -356,7 +356,7 @@ class Lobby:
 
             await self.start_draft()
 
-            await asyncio.sleep(30) #Переставить потом на 1200
+            await asyncio.sleep(1200) #Переставить потом на 1200
             await self.channel.send("⚔ Капитаны, подтвердите победу, нажав на кнопку ниже:", view=WinButtonView(self))
 
         except Exception as e:

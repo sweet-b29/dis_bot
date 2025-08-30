@@ -8,7 +8,10 @@ BASE_IMAGE_PATH = Path(__file__).resolve().parents[1] / "pictures" / "lobby_base
 OUTPUT_IMAGE_PATH = Path(__file__).resolve().parents[1] / "pictures" / "lobby_dynamic.png"
 FONT_PATH = Path(__file__).resolve().parents[1] / "static" / "fonts" / "Inter-SemiBold.ttf"
 RANK_ICONS_PATH = Path(__file__).resolve().parents[1] / "pictures" / "ranks"
-MAP_ICONS_PATH = Path(__file__).resolve().parents[1] / "pictures" / "maps"
+MAP_DIRS = [
+    Path(__file__).resolve().parents[1] / "maps",
+    Path(__file__).resolve().parents[1] / "pictures" / "maps",
+]
 
 CANDIDATE_FONT_PATHS = [
     FONT_PATH,
@@ -16,6 +19,28 @@ CANDIDATE_FONT_PATHS = [
     Path(__file__).resolve().parents[2] / "static" / "fonts" / "Inter-SemiBold.ttf",
     Path(__file__).resolve().parents[1] / "fonts" / "Inter-SemiBold.ttf",
 ]
+
+def _norm(s: str) -> str:
+    return (s or "").lower().replace(" ", "").replace("-", "").replace("_", "")
+
+def _find_map_image(map_name: str) -> Path | None:
+    """Находим файл карты (webp/png/jpg) в MAP_DIRS, без учёта регистра."""
+    name = _norm(map_name)
+    # 1) прямые попытки с разными расширениями
+    exts = ("webp", "png", "jpg", "jpeg")
+    for d in MAP_DIRS:
+        for ext in exts:
+            p = d / f"{map_name}.{ext}"       # с исходным регистром (Ascent.webp)
+            if p.exists():
+                return p
+    # 2) поиск по нормализованному имени
+    for d in MAP_DIRS:
+        if not d.exists():
+            continue
+        for p in d.glob("*.*"):
+            if _norm(p.stem) == name:
+                return p
+    return None
 
 @lru_cache(maxsize=8)
 def get_font(size: int):
@@ -204,7 +229,10 @@ def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], cu
     CELL_HEIGHT = 160
     TITLE_Y = 24
 
-    MAP_ICONS_PATH = Path(__file__).resolve().parents[1] / "pictures" / "maps"
+    MAP_DIRS = [
+        Path(__file__).resolve().parents[1] / "maps",
+        Path(__file__).resolve().parents[1] / "pictures" / "maps",
+    ]
     output_path = Path(__file__).resolve().parents[1] / "pictures" / "map_draft_dynamic.png"
 
     image = Image.new("RGBA", (WIDTH, HEIGHT), (30, 30, 30, 255))
@@ -223,15 +251,13 @@ def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], cu
         x = PADDING + col * (CELL_WIDTH + GRID_HGAP)
         y = 120 + row * (CELL_HEIGHT + GRID_VGAP)
 
-        icon_path = MAP_ICONS_PATH / f"{map_name}.png"
-        if not icon_path.exists():
-            icon_path = MAP_ICONS_PATH / f"{map_name}.webp"
-        if icon_path.exists():
+        icon_path = _find_map_image(map_name)
+        if icon_path:
             try:
-                icon = get_map_icon(map_name, CELL_WIDTH, CELL_HEIGHT)
+                tile = Image.open(icon_path).convert("RGB").resize((CELL_WIDTH, CELL_HEIGHT), Image.LANCZOS)
                 if map_name in banned_maps:
-                    icon = ImageEnhance.Brightness(icon).enhance(0.3)
-                image.paste(icon, (x, y))
+                    tile = ImageEnhance.Brightness(tile).enhance(0.30)
+                image.paste(tile, (x, y))
             except Exception as e:
                 print(f"⚠ Ошибка загрузки карты {map_name}: {e}")
 
@@ -247,11 +273,11 @@ def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], cu
 
 def generate_final_match_image(selected_map: str, team_sides: dict[int, str], captains: list[discord.Member]) -> Path:
     # Путь к карте
-    MAP_PATH = Path(__file__).resolve().parents[1] / "maps" / f"{selected_map}.webp"
-    if not MAP_PATH.exists():
+    mp = _find_map_image(selected_map)
+    if not mp:
         return None
+    base_img = Image.open(mp).convert("RGBA")
 
-    base_img = Image.open(MAP_PATH).convert("RGBA")
     draw = ImageDraw.Draw(base_img)
 
     font_big = get_font(60)
