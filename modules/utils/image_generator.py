@@ -82,38 +82,33 @@ def _rank_icon_path(rank: str) -> Path | None:
     return None
 
 def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) -> Path:
-    """
-    players: [{id, username, rank, wins}, ...]
-    top_ids: список ID игроков, которых подсвечиваем (ТОП-3).
-    """
     top_ids = top_ids or []
 
     pictures_dir = Path(__file__).resolve().parents[1] / "pictures"
     base_path = pictures_dir / "lobby_base.png"
     output_path = pictures_dir / "lobby_dynamic.png"
 
-    if base_path.exists():
-        base_img = Image.open(base_path).convert("RGBA")
-    else:
-        base_img = Image.new("RGBA", (1024, 1280), (20, 20, 20, 255))
-
+    base_img = Image.open(base_path).convert("RGBA") if base_path.exists() \
+        else Image.new("RGBA", (1024, 1280), (20, 20, 20, 255))
     draw = ImageDraw.Draw(base_img)
     width, height = base_img.size
 
-    # ===== разметка списка (без собственного заголовка) =====
-    PADDING_X = 64     # левый отступ
-    ROW_H     = 88     # высота строки
-    GAP       = 16     # промежутки между колонками
-    NUM_W     = 48     # ширина под номер
-    ICON_W    = 56     # ширина под иконку ранга
+    # ===== разметка «как на макете» =====
+    PADDING_X = 96         # левый край колонки с контентом
+    LIST_TOP  = 320        # старт списка (под заголовком из шаблона)
+    ROW_H     = 120        # высота строки
+    GAP       = 24
+    NUM_W     = 56         # ширина колонки под номер
 
-    LIST_TOP  = 260
+    ICON_W    = 72
+    ICON_COL_X_RATIO = 0.62
+    ICON_X = min(int(width * ICON_COL_X_RATIO), width - PADDING_X - ICON_W)
 
-    number_font = get_font(36)
+    number_font = get_font(48)
 
-    # доступная ширина под имя
+    # область под имя: от «после номера» до колонки иконки
     name_x = PADDING_X + NUM_W + GAP
-    name_w = width - PADDING_X - name_x - ICON_W - GAP
+    name_w = ICON_X - name_x - GAP
 
     for idx, p in enumerate(players, start=1):
         username = str(p.get("username") or "—")
@@ -126,25 +121,24 @@ def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) 
         # номер
         _draw_text(draw, (PADDING_X, y), f"{idx}", number_font, fill="white")
 
-        # имя — размер шрифта под ширину колонки (не меньше 28px)
-        name_font  = _fit_font(draw, username, name_w, start=50, min_size=28)
-        name_color = "#FFD23F" if is_top else "white"
+        # имя: крупно, но не выходя за name_w
+        name_font  = _fit_font(draw, username, name_w, start=64, min_size=32)
+        name_color = "#FFD23F" if is_top else "white"  # ТОП-3 — жёлтым
         _draw_text(draw, (name_x, y), username, name_font, fill=name_color)
 
-        # иконка ранга справа
-        icon_x = name_x + name_w + GAP
+        # иконка ранга — в фиксированной колонке
         icon_y = y + (ROW_H - ICON_W) // 2
         icon_path = _rank_icon_path(rank)
-        if icon_path:
+        if icon_path and icon_path.exists():
             try:
                 icon = Image.open(icon_path).resize((ICON_W, ICON_W)).convert("RGBA")
-                base_img.paste(icon, (icon_x, icon_y), icon)
+                base_img.paste(icon, (ICON_X, icon_y), icon)
             except Exception:
-                rank_font = get_font(28)
-                _draw_text(draw, (icon_x, y), rank, rank_font, fill="#B3B3B3")
+                rank_font = get_font(32)
+                _draw_text(draw, (ICON_X, y), rank, rank_font, fill="#B3B3B3")
         else:
-            rank_font = get_font(28)
-            _draw_text(draw, (icon_x, y), rank, rank_font, fill="#B3B3B3")
+            rank_font = get_font(32)
+            _draw_text(draw, (ICON_X, y), rank, rank_font, fill="#B3B3B3")
 
     base_img.save(output_path)
     return output_path
