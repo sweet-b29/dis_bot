@@ -46,6 +46,15 @@ COLOR_GOLD   = (255, 210, 77)
 COLOR_SILVER = (197, 203, 212)
 COLOR_BRONZE = (205, 127, 50)
 
+def _place_color(place: int) -> tuple[int, int, int]:
+    if place == 1:
+        return COLOR_GOLD
+    if place == 2:
+        return COLOR_SILVER
+    if place == 3:
+        return COLOR_BRONZE
+    return (255, 255, 255)
+
 def _color_for_top(pid: int | None, top_ids: list[int] | None):
     if not pid or not top_ids:
         return None
@@ -182,57 +191,83 @@ def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) 
     base_img.save(output_path)
     return output_path
 
-def generate_draft_image(players: list[dict], captain_1_id: int, captain_2_id: int, top_ids: list[int] | None = None):
-    # Картинка подложка
-    DRAFT_BASE_PATH = Path(__file__).resolve().parents[1] / "pictures" / "draft_base.png"
-    output_path = Path(__file__).resolve().parents[1] / "pictures" / "draft_dynamic.png"
-    image = Image.open(DRAFT_BASE_PATH).convert("RGBA")
-    draw = ImageDraw.Draw(image)
+def generate_draft_image(
+    players: list[dict],
+    captain_1_id: int,
+    captain_2_id: int,
+    top_ids: list[int] | None = None
+) -> Path:
+    # Подложка
+    base_path = Path(__file__).resolve().parents[1] / "pictures" / "draft_base.png"
+    out_path  = Path(__file__).resolve().parents[1] / "pictures" / "draft_dynamic.png"
+    image = Image.open(base_path).convert("RGBA")
+    draw  = ImageDraw.Draw(image)
 
-    # Шрифты и размеры
-    nickname_font_size = 54
-    line_spacing = 85
-    rank_size = 48
+    # ===== разметка колонок =====
+    PAD_X     = 80                     # внутренние отступы слева/справа
+    CENTER_X  = image.width // 2
+    GAP       = 14                     # между ником и иконкой
+    LINE_H    = 90                     # высота строки
+    RANK_SIZE = 56                     # размер иконки ранга
 
-    font = get_font(nickname_font_size)
+    # Левая колонка (от PAD_X до CENTER_X - PAD_X)
+    L_LEFT   = PAD_X
+    L_RIGHT  = CENTER_X - PAD_X
+    L_TEXT_X = L_LEFT + 16                  # старт текста
+    L_ICON_X = L_RIGHT - RANK_SIZE          # иконка ВСЕГДА справа
 
-    # Команды
+    # Правая колонка (от CENTER_X + PAD_X до image.width - PAD_X)
+    R_LEFT   = CENTER_X + PAD_X
+    R_RIGHT  = image.width - PAD_X
+    R_TEXT_X = R_LEFT + 16                  # тоже левое выравнивание
+    R_ICON_X = R_RIGHT - RANK_SIZE
+
+    # Пределы шрифта
+    NICK_START = 54
+    NICK_MIN   = 30
+
+    # Разбиваем игроков
     team_1 = [p for p in players if p["team"] == "captain_1"]
     team_2 = [p for p in players if p["team"] == "captain_2"]
 
-    def draw_team(team_data, x_text, x_rank, align="left", captain_id=None):
-        total_height = len(team_data) * line_spacing
-        start_y = (image.height - total_height) // 2 + 40
-        y = start_y
+    def draw_column(team_data, x_text, x_icon, captain_id=None):
+        """Текст слева, иконка справа; шрифт подгоняем под доступную ширину."""
+        total_h = len(team_data) * LINE_H
+        y = (image.height - total_h) // 2 + 40
 
-        for player in team_data:
-            name = player.get("username", "—")
-            rank = player.get("rank", "Unranked")
-            is_captain = player.get("id") == captain_id
-            pid = player.get("discord_id") or player.get("id")
+        name_max_w = (x_icon - GAP) - x_text  # доступная ширина под ник
+
+        for p in team_data:
+            name = p.get("username", "—")
+            rank = p.get("rank", "Unranked")
+
+            # цвет ника (топ-3 → золото/серебро/бронза; иначе белый)
+            pid       = p.get("discord_id") or p.get("id")
             top_color = _color_for_top(pid, top_ids)
-            color = top_color or ("#FFD23F" if is_captain else "white")
-            draw.text((x_text, y), name, font=font, fill=color, anchor="la" if align == "left" else "ra")
-            icon_path = get_icon_path(rank)
+            color     = top_color or "white"
 
+            # подбираем шрифт под ширину колонки
+            font = _fit_font(draw, name, name_max_w, start=NICK_START, min_size=NICK_MIN)
+            _draw_text(draw, (x_text, y), name, font=font, fill=color)
+
+            # иконка ранга по центру строки
+            icon_path = get_icon_path(rank)
             if icon_path:
                 try:
-                    icon = Image.open(icon_path).resize((rank_size, rank_size)).convert("RGBA")
-                    image.paste(icon, (x_rank, y), icon)
-                except:
+                    icon = Image.open(icon_path).resize((RANK_SIZE, RANK_SIZE)).convert("RGBA")
+                    icon_y = y + (LINE_H - RANK_SIZE) // 2
+                    image.paste(icon, (x_icon, icon_y), icon)
+                except Exception:
                     pass
 
-            y += line_spacing
+            y += LINE_H
 
-    # Левая колонка
-    draw_team(team_1, x_text=80, x_rank=300, align="left", captain_id=captain_1_id)
+    # Рисуем обе колонки (оба — левое выравнивание, иконка справа)
+    draw_column(team_1, L_TEXT_X, L_ICON_X, captain_id=captain_1_id)
+    draw_column(team_2, R_TEXT_X, R_ICON_X, captain_id=captain_2_id)
 
-    # Правая колонка
-    draw_team(team_2, x_text=830, x_rank=730, align="right", captain_id=captain_2_id)
-
-    image.save(output_path)
-    return output_path
-
+    image.save(out_path)
+    return out_path
 
 def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], current_captain: str) -> Path:
     WIDTH, HEIGHT = 1280, 720
@@ -315,8 +350,14 @@ def generate_final_match_image(
 
     draw = ImageDraw.Draw(canvas)
 
+    # ---- настройки прозрачности ----
+    OVERLAY_ALPHA = 70  # было 120 — общий дым стал ~в 2 раза прозрачнее
+    PANEL_ALPHA = 110  # было 160 — панели стали прозрачнее
+    PANEL_RADIUS = 24
+    PANEL_OUTLINE = (255, 255, 255, 60)  # тонкий светлый контур
+
     # Тёмный слой для читабельности
-    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 120))
+    overlay = Image.new("RGBA", (W, H), (0, 0, 0, OVERLAY_ALPHA))
     canvas.paste(overlay, (0, 0), overlay)
 
     # Заголовок
@@ -331,9 +372,9 @@ def generate_final_match_image(
     COL_H = H - 180
     TOP = 140
 
-    box_fill = (20, 20, 22, 160)
-    draw.rounded_rectangle([PAD, TOP, PAD + COL_W, TOP + COL_H], radius=24, fill=box_fill)
-    draw.rounded_rectangle([PAD*2 + COL_W, TOP, PAD*2 + COL_W*2, TOP + COL_H], radius=24, fill=box_fill)
+    box_fill = (20, 20, 22, PANEL_ALPHA)
+    draw.rounded_rectangle([PAD, TOP, PAD + COL_W, TOP + COL_H], radius=PANEL_RADIUS, fill=box_fill, outline=PANEL_OUTLINE, width=2)
+    draw.rounded_rectangle([PAD * 2 + COL_W, TOP, PAD * 2 + COL_W * 2, TOP + COL_H], radius=PANEL_RADIUS, fill=box_fill, outline=PANEL_OUTLINE, width=2)
 
     h_font = get_font(44)
     _draw_text(draw, (PAD + 28, TOP + 16), "АТАКА", h_font, fill="#ff5555", stroke=2)
@@ -365,41 +406,50 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
     image = Image.open(base_path).convert("RGBA")
     draw = ImageDraw.Draw(image)
 
-    # Настройки
-    font = get_font(40)
-    icon_size = 54
-    step_y = 90
-    start_y = 180
-    number_x = 70
-    name_x = 150
-    rank_icon_x = 660
-    wins_x = 780
+    # Разметка
+    num_font   = get_font(44)
+    stat_font  = get_font(40)
+    icon_size  = 56
+    row_h      = 90
+    start_y    = 180
 
-    for idx, player in enumerate(players):
-        y = start_y + idx * step_y
-        username = player.get("username", "—")
-        rank = player.get("rank", "Unranked")
-        wins = player.get("wins", 0)
-        matches = player.get("matches", 1)
-        winrate = int(wins / matches * 100) if matches > 0 else 0
+    number_x   = 70
+    name_x     = 150
+    rank_icon_x = 660   # колонка иконки ранга
+    wins_x     = 780    # колонка "0W | 0%"
 
-        # Номер
-        draw.text((number_x, y), f"{idx+1}.", font=font, fill="white")
+    for place, player in enumerate(players, start=1):
+        y = start_y + (place - 1) * row_h
 
-        # Ник
-        draw.text((name_x, y), username, font=font, fill="white")
+        username = str(player.get("username") or "—")
+        rank     = str(player.get("rank") or "Unranked")
+        wins     = int(player.get("wins", 0))
+        matches  = int(player.get("matches", 0))
+        winrate  = int(wins / matches * 100) if matches > 0 else 0
 
-        # Иконка ранга
+        # Цвет по месту (ТОП-3)
+        c = _place_color(place)
+
+        # Номер и имя (c обводкой)
+        _draw_text(draw, (number_x, y), f"{place}.", num_font, fill=c, stroke=2)
+
+        # имя должно влезть между name_x и rank_icon_x
+        name_max_w = (rank_icon_x - 24) - name_x
+        name_font  = _fit_font(draw, username, name_max_w, start=42, min_size=28)
+        _draw_text(draw, (name_x, y), username, name_font, fill=c, stroke=2)
+
+        # Иконка ранга по центру строки
         icon_path = get_icon_path(rank)
         if icon_path:
             try:
                 icon = Image.open(icon_path).resize((icon_size, icon_size)).convert("RGBA")
-                image.paste(icon, (rank_icon_x, y), icon)
-            except Exception as e:
-                print(f"⚠ Ошибка иконки ранга: {e}")
+                icon_y = y + (row_h - icon_size) // 2
+                image.paste(icon, (rank_icon_x, icon_y), icon)
+            except Exception:
+                pass
 
         # Победы и винрейт
-        draw.text((wins_x, y), f"{wins}W | {winrate}%", font=font, fill="white")
+        _draw_text(draw, (wins_x, y), f"{wins}W | {winrate}%", stat_font, fill="white", stroke=2)
 
     image.save(output_path)
     return output_path
