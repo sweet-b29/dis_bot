@@ -83,9 +83,8 @@ def _rank_icon_path(rank: str) -> Path | None:
 
 def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) -> Path:
     """
-    Рисует список участников.
     players: [{id, username, rank, wins}, ...]
-    top_ids: список ID игроков, которых надо подсветить (ТОП-3).
+    top_ids: список ID игроков, которых подсвечиваем (ТОП-3).
     """
     top_ids = top_ids or []
 
@@ -93,34 +92,28 @@ def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) 
     base_path = pictures_dir / "lobby_base.png"
     output_path = pictures_dir / "lobby_dynamic.png"
 
-    # фон
     if base_path.exists():
         base_img = Image.open(base_path).convert("RGBA")
     else:
-        base_img = Image.new("RGBA", (1024, 1280), (20, 20, 20, 255))  # fallback
+        base_img = Image.new("RGBA", (1024, 1280), (20, 20, 20, 255))
 
     draw = ImageDraw.Draw(base_img)
     width, height = base_img.size
 
-    # Заголовок
-    title_font = get_font(72)
-    _draw_text(draw, (64, 64), "УЧАСТНИКИ:", title_font, fill="white")
+    # ===== разметка списка (без собственного заголовка) =====
+    PADDING_X = 64     # левый отступ
+    ROW_H     = 88     # высота строки
+    GAP       = 16     # промежутки между колонками
+    NUM_W     = 48     # ширина под номер
+    ICON_W    = 56     # ширина под иконку ранга
 
-    # ===== разметка списка =====
-    PADDING_X = 64           # левый отступ
-    ROW_H     = 88           # высота строки
-    GAP       = 16           # промежутки между колонками
-    NUM_W     = 48           # ширина под номер
-    ICON_W    = 56           # ширина ячейки под иконку ранга
+    LIST_TOP  = 260
 
     number_font = get_font(36)
 
-    # доступная ширина под имя (в пикселях)
+    # доступная ширина под имя
     name_x = PADDING_X + NUM_W + GAP
     name_w = width - PADDING_X - name_x - ICON_W - GAP
-
-    # откуда начинать список по вертикали (чуть ниже заголовка)
-    start_y = 160
 
     for idx, p in enumerate(players, start=1):
         username = str(p.get("username") or "—")
@@ -128,17 +121,17 @@ def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) 
         pid      = p.get("id")
         is_top   = pid in top_ids
 
-        y = start_y + (idx - 1) * ROW_H
+        y = LIST_TOP + (idx - 1) * ROW_H
 
         # номер
         _draw_text(draw, (PADDING_X, y), f"{idx}", number_font, fill="white")
 
-        # имя — подбираем размер под ширину колонки (не меньше 28px)
+        # имя — размер шрифта под ширину колонки (не меньше 28px)
         name_font  = _fit_font(draw, username, name_w, start=50, min_size=28)
-        name_color = "#FFD23F" if is_top else "white"   # ТОП-3 — жёлтым
+        name_color = "#FFD23F" if is_top else "white"
         _draw_text(draw, (name_x, y), username, name_font, fill=name_color)
 
-        # иконка ранга справа (или текст ранга, если иконки нет)
+        # иконка ранга справа
         icon_x = name_x + name_w + GAP
         icon_y = y + (ROW_H - ICON_W) // 2
         icon_path = _rank_icon_path(rank)
