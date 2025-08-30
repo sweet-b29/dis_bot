@@ -3,6 +3,7 @@ import discord
 from loguru import logger
 from discord import File, Embed
 from modules.utils import api_client
+from modules.utils.api_client import get_leaderboard_top
 from modules.utils.image_generator import generate_draft_image, generate_map_ban_image, generate_final_match_image
 
 MAX_PLAYERS = 4 # Измените при необходимости
@@ -106,23 +107,27 @@ class Draft:
         for member in [self.captains[0]] + self.teams[self.captains[0]]:
             profile = await api_client.get_player_profile(member.id)
             if profile:
-                players_data.append({"id": profile["id"], "username": profile["username"], "rank": profile["rank"],
+                players_data.append({"id": profile["id"], "discord_id": member.id,
+                                     "username": profile["username"], "rank": profile["rank"],
                                      "team": "captain_1"})
 
         for member in [self.captains[1]] + self.teams[self.captains[1]]:
             profile = await api_client.get_player_profile(member.id)
             if profile:
-                players_data.append({"id": profile["id"], "username": profile["username"], "rank": profile["rank"],
+                players_data.append({"id": profile["id"], "discord_id": member.id,
+                                     "username": profile["username"], "rank": profile["rank"],
                                      "team": "captain_2"})
 
         # Генерируем и отправляем картинку
         capt1 = await api_client.get_player_profile(self.captains[0].id) or {}
         capt2 = await api_client.get_player_profile(self.captains[1].id) or {}
 
+        top_ids = await get_leaderboard_top(3)
         image_path = generate_draft_image(
             players_data,
             captain_1_id=capt1.get("id"),
             captain_2_id=capt2.get("id"),
+            top_ids=top_ids,
         )
 
         file = discord.File(image_path, filename="draft_dynamic.png")

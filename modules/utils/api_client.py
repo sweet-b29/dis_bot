@@ -169,6 +169,31 @@ async def get_top10_players():
         return []
     return await _safe_json(resp)
 
+async def get_leaderboard_top(limit: int = 3) -> list[int]:
+    """
+    Возвращает упорядоченный список discord_id топ-игроков (1→3 место).
+    Пытаемся /players/leaderboard/, если нет — /players/top10/.
+    """
+    def extract_ids(rows):
+        ids = []
+        for r in rows or []:
+            did = r.get("discord_id")
+            if not did and isinstance(r.get("player"), dict):
+                did = r["player"].get("discord_id")
+            if did:
+                ids.append(int(did))
+        return ids
+
+    for endpoint in ("players/leaderboard/", "players/top10/"):
+        resp = await _request("GET", api(endpoint), headers=HEADERS)
+        if resp and resp.status == 200:
+            data = await _safe_json(resp)
+            ids = extract_ids(data)
+            if ids:
+                return ids[:limit]
+    return []
+
+
 # --- Matches ---
 
 async def create_match(payload: dict):

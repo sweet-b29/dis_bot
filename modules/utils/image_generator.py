@@ -42,6 +42,19 @@ def _find_map_image(map_name: str) -> Path | None:
                 return p
     return None
 
+COLOR_GOLD   = (255, 210, 77)
+COLOR_SILVER = (197, 203, 212)
+COLOR_BRONZE = (205, 127, 50)
+
+def _color_for_top(pid: int | None, top_ids: list[int] | None):
+    if not pid or not top_ids:
+        return None
+    try:
+        i = top_ids.index(int(pid))
+    except ValueError:
+        return None
+    return (COLOR_GOLD, COLOR_SILVER, COLOR_BRONZE)[i] if i < 3 else None
+
 @lru_cache(maxsize=8)
 def get_font(size: int):
     # 1) пробуем Inter из проекта
@@ -148,7 +161,8 @@ def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) 
 
         # имя: крупно, но не выходя за name_w
         name_font  = _fit_font(draw, username, name_w, start=64, min_size=32)
-        name_color = "#FFD23F" if is_top else "white"  # ТОП-3 — жёлтым
+        pid = p.get("discord_id") or p.get("id")
+        name_color = _color_for_top(pid, top_ids) or "white"
         _draw_text(draw, (name_x, y), username, name_font, fill=name_color)
 
         # иконка ранга — в фиксированной колонке
@@ -168,7 +182,7 @@ def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) 
     base_img.save(output_path)
     return output_path
 
-def generate_draft_image(players: list[dict], captain_1_id: int, captain_2_id: int):
+def generate_draft_image(players: list[dict], captain_1_id: int, captain_2_id: int, top_ids: list[int] | None = None):
     # Картинка подложка
     DRAFT_BASE_PATH = Path(__file__).resolve().parents[1] / "pictures" / "draft_base.png"
     output_path = Path(__file__).resolve().parents[1] / "pictures" / "draft_dynamic.png"
@@ -195,11 +209,12 @@ def generate_draft_image(players: list[dict], captain_1_id: int, captain_2_id: i
             name = player.get("username", "—")
             rank = player.get("rank", "Unranked")
             is_captain = player.get("id") == captain_id
-            color = "gold" if is_captain else "white"
-
+            pid = player.get("discord_id") or player.get("id")
+            top_color = _color_for_top(pid, top_ids)
+            color = top_color or ("#FFD23F" if is_captain else "white")
             draw.text((x_text, y), name, font=font, fill=color, anchor="la" if align == "left" else "ra")
-
             icon_path = get_icon_path(rank)
+
             if icon_path:
                 try:
                     icon = Image.open(icon_path).resize((rank_size, rank_size)).convert("RGBA")
@@ -351,8 +366,7 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
     draw = ImageDraw.Draw(image)
 
     # Настройки
-    font_path = FONT_PATH
-    font = ImageFont.truetype(str(font_path), 40)
+    font = get_font(40)
     icon_size = 54
     step_y = 90
     start_y = 180

@@ -8,7 +8,7 @@ from loguru import logger
 import asyncio, time
 import os
 from modules.utils.image_generator import generate_lobby_image
-from modules.utils.api_client import is_banned
+from modules.utils.api_client import is_banned, get_leaderboard_top
 from modules.utils.utils import create_discord_file, render_ban_message
 
 LOBBY_COUNTERS = {
@@ -120,18 +120,15 @@ class JoinLobbyButton(View):
             profile = t.result() or {}
             players_data.append({
                 "id": profile.get("id"),
+                "discord_id": m.id if isinstance(m, discord.Member) else profile.get("discord_id"),
                 "username": profile.get("username", "—"),
                 "rank": profile.get("rank", "—"),
                 "wins": profile.get("wins", 0),
             })
 
         # Топ по победам
-        top_profiles = sorted(
-            [p for p in players_data if p.get("id")],
-            key=lambda x: x.get("wins", 0),
-            reverse=True
-        )[:3]
-        top_ids = [p["id"] for p in top_profiles]
+        top_ids = await get_leaderboard_top(3)  # список discord_id топ-3
+        image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
         image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
@@ -232,20 +229,16 @@ class Lobby:
         for m in self.members:
             profile = await profiles_cache.get(m.id)
             players_data.append({
-                "id": profile.get("id") if profile else None,
-                "username": profile.get("username", "—") if profile else "—",
-                "rank": profile.get("rank", "—") if profile else "—",
-                "wins": profile.get("wins", 0) if profile else 0
+                "id": profile.get("id"),
+                "discord_id": m.id if isinstance(m, discord.Member) else profile.get("discord_id"),
+                "username": profile.get("username", "—"),
+                "rank": profile.get("rank", "—"),
+                "wins": profile.get("wins", 0),
             })
 
         # Генерируем изображение
-        top_profiles = sorted(
-            [p for p in players_data if p.get("id")],
-            key=lambda x: x.get("wins", 0),
-            reverse=True
-        )[:3]
-
-        top_ids = [p["id"] for p in top_profiles]
+        top_ids = await get_leaderboard_top(3)  # список discord_id топ-3
+        image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
         image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
@@ -326,18 +319,15 @@ class Lobby:
             for m in self.captains + self.members:
                 profile = await profiles_cache.get(m.id)
                 players_data.append({
-                    "id": profile.get("id") if profile else None,
-                    "username": profile.get("username", "—") if profile else "—",
-                    "rank": profile.get("rank", "—") if profile else "—",
-                    "wins": profile.get("wins", 0) if profile else 0
+                    "id": profile.get("id"),
+                    "discord_id": m.id if isinstance(m, discord.Member) else profile.get("discord_id"),
+                    "username": profile.get("username", "—"),
+                    "rank": profile.get("rank", "—"),
+                    "wins": profile.get("wins", 0),
                 })
 
-            top_profiles = sorted(
-                [p for p in players_data if p.get("id")],
-                key=lambda x: x.get("wins", 0),
-                reverse=True
-            )[:3]
-            top_ids = [p["id"] for p in top_profiles]
+            top_ids = await get_leaderboard_top(3)  # список discord_id топ-3
+            image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
             image_path = generate_lobby_image(players_data, top_ids=top_ids)
             file = discord.File(image_path, filename="lobby_dynamic.png")
