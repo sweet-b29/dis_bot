@@ -12,6 +12,7 @@ MAP_ICONS_PATH = Path(__file__).resolve().parents[1] / "pictures" / "maps"
 
 CANDIDATE_FONT_PATHS = [
     FONT_PATH,
+    Path(__file__).resolve().parents[1] / "pictures" / "Montserrat-Bold.ttf",
     Path(__file__).resolve().parents[2] / "static" / "fonts" / "Inter-SemiBold.ttf",
     Path(__file__).resolve().parents[1] / "fonts" / "Inter-SemiBold.ttf",
 ]
@@ -53,58 +54,107 @@ def get_icon_path(rank: str):
     path = RANK_ICONS_PATH / filename
     return path if path.exists() else None
 
-def generate_lobby_image(players: list[dict], top_ids: list[int] = []):
-    base_img = Image.open(BASE_IMAGE_PATH).convert("RGBA")
+def _fit_font(draw: ImageDraw.ImageDraw, text: str, max_px: int, start: int, min_size: int = 28):
+    """Подбирает размер шрифта так, чтобы текст влезал по ширине max_px."""
+    size = start
+    font = get_font(size)
+    while draw.textlength(text, font=font) > max_px and size > min_size:
+        size -= 2
+        font = get_font(size)
+    return font
+
+def _draw_text(draw: ImageDraw.ImageDraw, xy: tuple[int, int], text: str, font, fill="white", stroke: int = 2):
+    """Рисует текст с тонкой чёрной обводкой для контраста."""
+    draw.text(xy, text, font=font, fill=fill, stroke_width=stroke, stroke_fill=(0, 0, 0, 220))
+
+def _rank_icon_path(rank: str) -> Path | None:
+    """Находим файл иконки ранга по префиксу (без учёта регистра)."""
+    ranks_dir = Path(__file__).resolve().parents[1] / "pictures" / "ranks"
+    # частые варианты имён файлов
+    cand = ranks_dir / f"{rank}_Rank.png"
+    if cand.exists():
+        return cand
+    # ищем первый файл, начинающийся с названия ранга
+    rank_lower = (rank or "").lower()
+    for p in ranks_dir.glob("*.png"):
+        if p.name.lower().startswith(rank_lower):
+            return p
+    return None
+
+def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) -> Path:
+    """
+    Рисует список участников.
+    players: [{id, username, rank, wins}, ...]
+    top_ids: список ID игроков, которых надо подсветить (ТОП-3).
+    """
+    top_ids = top_ids or []
+
+    pictures_dir = Path(__file__).resolve().parents[1] / "pictures"
+    base_path = pictures_dir / "lobby_base.png"
+    output_path = pictures_dir / "lobby_dynamic.png"
+
+    # фон
+    if base_path.exists():
+        base_img = Image.open(base_path).convert("RGBA")
+    else:
+        base_img = Image.new("RGBA", (1024, 1280), (20, 20, 20, 255))  # fallback
+
+    draw = ImageDraw.Draw(base_img)
     width, height = base_img.size
 
-    # Шрифты и размеры
-    base_font_size = 52
-    min_font_size = 28
-    icon_size = 64
-    step_y = 100
-    top_margin = 200
+    # Заголовок
+    title_font = get_font(72)
+    _draw_text(draw, (64, 64), "УЧАСТНИКИ:", title_font, fill="white")
 
-    # Координаты
-    number_x = 80
-    nickname_x = 140
-    rank_icon_x = 580
+    # ===== разметка списка =====
+    PADDING_X = 64           # левый отступ
+    ROW_H     = 88           # высота строки
+    GAP       = 16           # промежутки между колонками
+    NUM_W     = 48           # ширина под номер
+    ICON_W    = 56           # ширина ячейки под иконку ранга
 
-    # Динамическое центрирование
-    total_height = len(players) * step_y
-    start_y = (height - total_height) // 2
-    draw = ImageDraw.Draw(base_img)
+    number_font = get_font(36)
 
-    for i, player in enumerate(players):
-        y = start_y + i * step_y
-        username = player.get("username", "—")
-        rank = player.get("rank", "Unranked")
+    # доступная ширина под имя (в пикселях)
+    name_x = PADDING_X + NUM_W + GAP
+    name_w = width - PADDING_X - name_x - ICON_W - GAP
 
-        # Номер игрока
-        font_number = get_font(40)
-        draw.text((number_x, y), str(i + 1), font=font_number, fill="white")
+    # откуда начинать список по вертикали (чуть ниже заголовка)
+    start_y = 160
 
-        # Подбор шрифта под ник
-        font_size = base_font_size
-        font = get_font(font_size)
-        while font.getlength(username) > 400 and font_size > min_font_size:
-            font_size -= 2
-            font = get_font(font_size)
+    for idx, p in enumerate(players, start=1):
+        username = str(p.get("username") or "—")
+        rank     = str(p.get("rank") or "Unranked")
+        pid      = p.get("id")
+        is_top   = pid in top_ids
 
-        fill_color = "gold" if player.get("id") in top_ids else "white"
-        draw.text((nickname_x, y), username, font=font, fill=fill_color)
+        y = start_y + (idx - 1) * ROW_H
 
-        # Ранг — иконка
-        icon_path = get_icon_path(rank)
+        # номер
+        _draw_text(draw, (PADDING_X, y), f"{idx}", number_font, fill="white")
+
+        # имя — подбираем размер под ширину колонки (не меньше 28px)
+        name_font  = _fit_font(draw, username, name_w, start=50, min_size=28)
+        name_color = "#FFD23F" if is_top else "white"   # ТОП-3 — жёлтым
+        _draw_text(draw, (name_x, y), username, name_font, fill=name_color)
+
+        # иконка ранга справа (или текст ранга, если иконки нет)
+        icon_x = name_x + name_w + GAP
+        icon_y = y + (ROW_H - ICON_W) // 2
+        icon_path = _rank_icon_path(rank)
         if icon_path:
             try:
-                icon = Image.open(icon_path).resize((icon_size, icon_size)).convert("RGBA")
-                icon_y = y + (step_y - icon_size) // 2
-                base_img.paste(icon, (rank_icon_x, icon_y), icon)
-            except Exception as e:
-                print(f"⚠ Ошибка загрузки иконки ранга {rank}: {e}")
+                icon = Image.open(icon_path).resize((ICON_W, ICON_W)).convert("RGBA")
+                base_img.paste(icon, (icon_x, icon_y), icon)
+            except Exception:
+                rank_font = get_font(28)
+                _draw_text(draw, (icon_x, y), rank, rank_font, fill="#B3B3B3")
+        else:
+            rank_font = get_font(28)
+            _draw_text(draw, (icon_x, y), rank, rank_font, fill="#B3B3B3")
 
-    base_img.save(OUTPUT_IMAGE_PATH)
-    return OUTPUT_IMAGE_PATH
+    base_img.save(output_path)
+    return output_path
 
 def generate_draft_image(players: list[dict], captain_1_id: int, captain_2_id: int):
     # Картинка подложка
