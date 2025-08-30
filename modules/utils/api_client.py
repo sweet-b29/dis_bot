@@ -8,21 +8,20 @@ from pathlib import Path
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
-API_BASE_URL = os.getenv("DJANGO_API_URL")
+API_BASE_URL = os.getenv("DJANGO_API_URL", "http://127.0.0.1:8000/api").rstrip("/")
 DJANGO_API_TOKEN = os.getenv("DJANGO_API_TOKEN")
-HEADERS = {"Authorization": f"Token {DJANGO_API_TOKEN}", "Content-Type": "application/json"}
+HEADERS = {"Authorization": f"Token {os.getenv('DJANGO_API_TOKEN')}"}
 DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=15, connect=10, sock_read=10)
 
 _session: aiohttp.ClientSession | None = None
 
 def set_http_session(session: aiohttp.ClientSession):
-    """Вызываем из main.py один раз после создания ClientSession."""
+    """Вызывается из main.py один раз при старте бота."""
     global _session
     _session = session
 
 class _SessionCtx:
-    """Контекстный менеджер, который возвращает общую сессию, если она есть,
-    а если нет — создаёт временную и закрывает её по выходу из контекста."""
+    """Вернёт общую сессию, а если её нет — создаст временную и сам закроет."""
     def __init__(self):
         self._owned = False
         self._tmp: aiohttp.ClientSession | None = None
@@ -38,6 +37,9 @@ class _SessionCtx:
         if self._owned and self._tmp is not None:
             await self._tmp.close()
 
+def get_session() -> _SessionCtx:
+    return _SessionCtx()
+
 async def _safe_json(resp: aiohttp.ClientResponse) -> dict:
     text = await resp.text()
     try:
@@ -46,37 +48,31 @@ async def _safe_json(resp: aiohttp.ClientResponse) -> dict:
         logger.error(f"❌ Ошибка JSON ({resp.status}): {e}; raw={text[:300]}")
         return {}
 
-def get_session() -> _SessionCtx:
-    """Используй как: async with get_session() as session: ..."""
-    return _SessionCtx()
-
-def _url(path: str) -> str:
-    return API_BASE_URL.rstrip("/") + "/" + path.lstrip("/")
-
-async def _request(method: str, path: str, **kwargs):
-    assert _session is not None, "HTTP session is not set. Call api_client.set_http_session(session)."
-    url = _url(path)
+async def _request(method: str, url: str, **kwargs):
+    """Запрос с экспоненциальными ретраями на сетевые ошибки и 429/5xx."""
     retries = kwargs.pop("retries", 3)
-    backoff = kwargs.pop("backoff", 0.5)  # стартовый
-    for attempt in range(retries + 1):
-        try:
-            async with _session.request(method, url, headers=HEADERS, **kwargs) as resp:
-                if resp.status == 429 or 500 <= resp.status < 600:
-                    # читаем тело для логов
-                    body = await resp.text()
-                    wait = resp.headers.get("Retry-After")
-                    wait_s = float(wait) if wait else backoff * (2 ** attempt)
-                    logger.warning(f"{method} {url} → {resp.status}. Retry in {wait_s:.2f}s. Body: {body[:200]}")
-                    if attempt < retries:
-                        await asyncio.sleep(min(wait_s, 5.0))
-                        continue
-                return resp
-        except aiohttp.ClientError as e:
-            logger.warning(f"{method} {url} network error: {e}")
-            if attempt < retries:
-                await asyncio.sleep(backoff * (2 ** attempt))
-                continue
-            raise
+    backoff = kwargs.pop("backoff", 0.5)
+    async with get_session() as session:
+        for attempt in range(retries + 1):
+            try:
+                async with session.request(method, url, **kwargs) as resp:
+                    # ретраим тяжёлые статусы
+                    if resp.status == 429 or 500 <= resp.status < 600:
+                        body = await resp.text()
+                        wait = resp.headers.get("Retry-After")
+                        wait_s = float(wait) if wait else backoff * (2 ** attempt)
+                        logger.warning(f"{method} {url} -> {resp.status}, retry in {wait_s:.2f}s; body={body[:160]}")
+                        if attempt < retries:
+                            await asyncio.sleep(min(wait_s, 5.0))
+                            continue
+                    return resp
+            except aiohttp.ClientError as e:
+                logger.warning(f"{method} {url} network error: {e}")
+                if attempt < retries:
+                    await asyncio.sleep(backoff * (2 ** attempt))
+                    continue
+                # последняя попытка провалилась — возвращаем None, но НЕ бросаем исключение
+                return None
 
 def ensure_api_config():
     missing = []
@@ -90,36 +86,40 @@ def ensure_api_config():
                            f"Проверь .env и перезапусти бота.")
 
 def api(path: str) -> str:
-    # корректно склеиваем, чтобы слеши не «дублились»
     return f"{API_BASE_URL}/{path.lstrip('/')}"
 
 # --- Players ---
 
 async def get_player_profile(discord_id: int) -> dict:
-    async with await _request("GET", f"players/{discord_id}/") as resp:
-        if resp.status == 404:
-            return {}
-        if resp.status != 200:
-            logger.error(f"GET players/{discord_id} -> {resp.status}: {await resp.text()}")
-            return {}
-        return await _safe_json(resp)
+    resp = await _request("GET", api(f"players/{discord_id}/"), headers=HEADERS)
+    if resp is None:
+        # сеть упала/соединение закрыто — тихо возвращаем пусто
+        return {}
+    if resp.status == 404:
+        return {}
+    if resp.status != 200:
+        logger.warning(f"GET players/{discord_id} -> {resp.status}")
+        return {}
+    return await _safe_json(resp)
 
 async def update_player_profile(discord_id: int, username: str | None = None, rank: str | None = None, create_if_not_exist: bool = False) -> dict:
-    payload = {"discord_id": discord_id, "create_if_not_exist": create_if_not_exist}
+    payload = {
+        "discord_id": discord_id,
+        "create_if_not_exist": create_if_not_exist,
+    }
     if username is not None:
         payload["username"] = username
     if rank is not None:
         payload["rank"] = rank
-    async with await _request("PATCH", "players/update_profile/", json=payload) as resp:
-        body = await resp.text()
-        if resp.status not in (200, 201):
-            logger.error(f"PATCH update_profile -> {resp.status}: {body[:400]}")
-            raise RuntimeError(f"update_profile failed: {resp.status}")
-        try:
-            return await _safe_json(resp)
-        except Exception:
-            logger.error("Bad JSON in update_profile response")
-            return {}
+
+    resp = await _request("PATCH", api("players/update_profile/"), headers=HEADERS, json=payload)
+    if resp is None:
+        return {"error": "network error"}
+    body = await _safe_json(resp)
+    if resp.status not in (200, 201):
+        logger.error(f"PATCH update_profile -> {resp.status}; body={body}")
+        return {"error": "update_profile failed"}
+    return body
 
 async def set_player_wins(discord_id: int, wins: int):
     payload = {"wins": wins}
