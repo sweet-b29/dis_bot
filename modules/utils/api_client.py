@@ -15,6 +15,29 @@ DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=15, connect=10, sock_read=10)
 
 _session: aiohttp.ClientSession | None = None
 
+def set_http_session(session: aiohttp.ClientSession):
+    """Вызываем из main.py один раз после создания ClientSession."""
+    global _session
+    _session = session
+
+class _SessionCtx:
+    """Контекстный менеджер, который возвращает общую сессию, если она есть,
+    а если нет — создаёт временную и закрывает её по выходу из контекста."""
+    def __init__(self):
+        self._owned = False
+        self._tmp: aiohttp.ClientSession | None = None
+
+    async def __aenter__(self) -> aiohttp.ClientSession:
+        if _session is not None:
+            return _session
+        self._owned = True
+        self._tmp = aiohttp.ClientSession(timeout=DEFAULT_TIMEOUT)
+        return self._tmp
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if self._owned and self._tmp is not None:
+            await self._tmp.close()
+
 async def _safe_json(resp: aiohttp.ClientResponse) -> dict:
     text = await resp.text()
     try:
@@ -23,8 +46,9 @@ async def _safe_json(resp: aiohttp.ClientResponse) -> dict:
         logger.error(f"❌ Ошибка JSON ({resp.status}): {e}; raw={text[:300]}")
         return {}
 
-def get_session():
-    return aiohttp.ClientSession(headers=HEADERS, timeout=DEFAULT_TIMEOUT)
+def get_session() -> _SessionCtx:
+    """Используй как: async with get_session() as session: ..."""
+    return _SessionCtx()
 
 def _url(path: str) -> str:
     return API_BASE_URL.rstrip("/") + "/" + path.lstrip("/")

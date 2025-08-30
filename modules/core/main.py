@@ -76,6 +76,16 @@ async def setup_hook():
     timeout = aiohttp.ClientTimeout(total=10, connect=5, sock_read=10)
     bot.http_session = aiohttp.ClientSession(timeout=timeout)
     api_client.set_http_session(bot.http_session)
+    _original_close = bot.close
+
+    async def _close_with_http():
+        try:
+            if hasattr(bot, "http_session") and bot.http_session:
+                await bot.http_session.close()
+        finally:
+            await _original_close()
+
+    bot.close = _close_with_http
 
     # Синхронизация команд на сервере
     try:
