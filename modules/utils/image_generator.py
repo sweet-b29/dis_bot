@@ -239,7 +239,7 @@ def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], cu
     draw = ImageDraw.Draw(image)
 
     title_font = get_font(48)
-    draw.text((PADDING, TITLE_Y), f"🌍 Карта бана — Ход: {current_captain}", font=title_font, fill="white")
+    draw.text((PADDING, TITLE_Y), f"Бан карт — Ход: {current_captain}", font=title_font, fill="white")
 
     all_maps = ["Ascent","Bind","Haven","Split","Icebox","Breeze","Fracture","Lotus","Sunset","Abyss","Pearl"]
     font = get_font(26)
@@ -271,31 +271,78 @@ def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], cu
     return output_path
 
 
-def generate_final_match_image(selected_map: str, team_sides: dict[int, str], captains: list[discord.Member]) -> Path:
-    # Путь к карте
+def generate_final_match_image(
+    selected_map: str,
+    attack_players: list[str],
+    defense_players: list[str],
+) -> Path:
+    pictures_dir = Path(__file__).resolve().parents[1] / "pictures"
+    out_path = pictures_dir / "final_match_dynamic.png"
+
+    # Холст 1280×720 — Discord покажет крупно
+    W, H = 1280, 720
+    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 255))
+
+    # Фон карты (cover)
     mp = _find_map_image(selected_map)
-    if not mp:
-        return None
-    base_img = Image.open(mp).convert("RGBA")
+    if mp:
+        try:
+            bg = Image.open(mp).convert("RGBA")
+            bw, bh = bg.size
+            k = max(W / bw, H / bh)
+            bg = bg.resize((int(bw * k), int(bh * k)), Image.LANCZOS)
+            x = (bg.size[0] - W) // 2
+            y = (bg.size[1] - H) // 2
+            bg = bg.crop((x, y, x + W, y + H))
+            canvas.paste(bg, (0, 0))
+        except Exception:
+            pass
 
-    draw = ImageDraw.Draw(base_img)
+    draw = ImageDraw.Draw(canvas)
 
-    font_big = get_font(60)
-    font_small = get_font(42)
+    # Тёмный слой для читабельности
+    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 120))
+    canvas.paste(overlay, (0, 0), overlay)
 
-    # Верхний текст: Название карты
-    draw.text((40, 20), f"Карта: {selected_map}", font=font_big, fill="white")
+    # Заголовок
+    title = f"КАРТА: {selected_map}"
+    title_font = get_font(72)
+    tw = draw.textlength(title, font=title_font)
+    _draw_text(draw, ((W - tw) // 2, 36), title, title_font, fill="white", stroke=3)
 
-    # Стороны
-    left = team_sides.get(captains[0].id, "—")
-    right = team_sides.get(captains[1].id, "—")
+    # Разметка колонок
+    PAD = 40
+    COL_W = (W - PAD * 3) // 2
+    COL_H = H - 180
+    TOP = 140
 
-    draw.text((40, 100), f"{captains[0].display_name} → {left}", font=font_small, fill="cyan")
-    draw.text((40, 170), f"{captains[1].display_name} → {right}", font=font_small, fill="orange")
+    box_fill = (20, 20, 22, 160)
+    draw.rounded_rectangle([PAD, TOP, PAD + COL_W, TOP + COL_H], radius=24, fill=box_fill)
+    draw.rounded_rectangle([PAD*2 + COL_W, TOP, PAD*2 + COL_W*2, TOP + COL_H], radius=24, fill=box_fill)
 
-    output = Path(__file__).resolve().parents[1] / "pictures" / "final_match_dynamic.png"
-    base_img.save(output)
-    return output
+    h_font = get_font(44)
+    _draw_text(draw, (PAD + 28, TOP + 16), "АТАКА", h_font, fill="#ff5555", stroke=2)
+    _draw_text(draw, (PAD*2 + COL_W + 28, TOP + 16), "ЗАЩИТА", h_font, fill="#5aa3ff", stroke=2)
+
+    # Списки игроков
+    row_font_start = 40
+    line_h = 56
+    y0 = TOP + 84
+
+    def draw_list(x0: int, players: list[str]):
+        y = y0
+        for name in players:
+            name = str(name or "—")
+            font = _fit_font(draw, name, COL_W - 56, start=row_font_start, min_size=28)
+            _draw_text(draw, (x0 + 28, y), f"• {name}", font, fill="white")
+            y += line_h
+
+    draw_list(PAD, attack_players)
+    draw_list(PAD*2 + COL_W, defense_players)
+
+    canvas.save(out_path)
+    return out_path
+
 
 def generate_leaderboard_image(players: list[dict]) -> Path:
     base_path = Path(__file__).resolve().parents[1] / "pictures" / "leaderboard.png"

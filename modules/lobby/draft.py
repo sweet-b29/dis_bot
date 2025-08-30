@@ -229,21 +229,29 @@ class Draft:
         self.current_captain = self.captains[1] if self.current_captain == self.captains[0] else self.captains[0]
 
     async def send_map_embed(self):
+        # Определяем, какая команда играет атаку
+        cap1_side = self.team_sides.get(self.captains[0].id)
+        cap2_side = self.team_sides.get(self.captains[1].id)
+
+        if cap1_side == "Атака":
+            attack_team_members = [self.captains[0]] + self.teams[self.captains[0]]
+            defense_team_members = [self.captains[1]] + self.teams[self.captains[1]]
+        else:
+            attack_team_members = [self.captains[1]] + self.teams[self.captains[1]]
+            defense_team_members = [self.captains[0]] + self.teams[self.captains[0]]
+
         image_path = generate_final_match_image(
             selected_map=self.selected_map,
-            team_sides=self.team_sides,
-            captains=self.captains
+            attack_players=[m.display_name for m in attack_team_members],
+            defense_players=[m.display_name for m in defense_team_members],
         )
 
-        if image_path and image_path.exists():
-            file = File(image_path, filename="final_match_dynamic.png")
-            await self.channel.send(
-                file=file,
-                content=None,
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-        else:
-            await self.channel.send("⚠️ Картинка карты не найдена.")
+        file = File(image_path, filename="final_match_dynamic.png")
+        await self.channel.send(
+            file=file,
+            content=None,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
         await self.finalize_match()
 
