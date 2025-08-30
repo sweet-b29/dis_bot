@@ -41,7 +41,11 @@ def get_session() -> _SessionCtx:
     return _SessionCtx()
 
 async def _safe_json(resp: aiohttp.ClientResponse) -> dict:
-    text = await resp.text()
+    try:
+        text = await resp.text()
+    except aiohttp.ClientError as e:
+        logger.warning(f"HTTP read error ({resp.status}): {e}")
+        return {}
     try:
         return json.loads(text)
     except Exception as e:
@@ -91,103 +95,131 @@ def api(path: str) -> str:
 # --- Players ---
 
 async def get_player_profile(discord_id: int) -> dict:
-    resp = await _request("GET", api(f"players/{discord_id}/"), headers=HEADERS)
-    if resp is None:
-        # сеть упала/соединение закрыто — тихо возвращаем пусто
+    try:
+        resp = await _request("GET", api(f"players/{discord_id}/"), headers=HEADERS)
+        if resp is None:
+            # сети нет / соединение оборвалось — вернём "пусто", НЕ кидаем исключение
+            return {}
+        if resp.status == 404:
+            return {}
+        if resp.status != 200:
+            logger.warning(f"GET players/{discord_id} -> {resp.status}")
+            return {}
+        return await _safe_json(resp)
+    except Exception as e:
+        # на всякий: ни одного исключения наружу
+        logger.warning(f"get_player_profile({discord_id}) error: {e}")
         return {}
-    if resp.status == 404:
-        return {}
-    if resp.status != 200:
-        logger.warning(f"GET players/{discord_id} -> {resp.status}")
-        return {}
-    return await _safe_json(resp)
+
 
 async def update_player_profile(discord_id: int, username: str | None = None, rank: str | None = None, create_if_not_exist: bool = False) -> dict:
-    payload = {
-        "discord_id": discord_id,
-        "create_if_not_exist": create_if_not_exist,
-    }
+    payload = {"discord_id": discord_id, "create_if_not_exist": create_if_not_exist}
     if username is not None:
         payload["username"] = username
     if rank is not None:
         payload["rank"] = rank
 
-    resp = await _request("PATCH", api("players/update_profile/"), headers=HEADERS, json=payload)
-    if resp is None:
+    try:
+        resp = await _request("PATCH", api("players/update_profile/"), headers=HEADERS, json=payload)
+        if resp is None:
+            return {"error": "network error"}
+        data = await _safe_json(resp)
+        if resp.status not in (200, 201):
+            logger.error(f"PATCH update_profile -> {resp.status}; body={data}")
+            return {"error": "update_profile failed"}
+        return data
+    except Exception as e:
+        logger.warning(f"update_player_profile error: {e}")
         return {"error": "network error"}
-    body = await _safe_json(resp)
-    if resp.status not in (200, 201):
-        logger.error(f"PATCH update_profile -> {resp.status}; body={body}")
-        return {"error": "update_profile failed"}
-    return body
+
 
 async def set_player_wins(discord_id: int, wins: int):
     payload = {"wins": wins}
-    async with await _request("POST", f"players/{discord_id}/set_wins/", json=payload) as resp:
-        return await _safe_json(resp)
+    resp = await _request("POST", api(f"players/{discord_id}/set_wins/"), headers=HEADERS, json=payload)
+    if resp is None:
+        return {"error": "network error"}
+    return await _safe_json(resp)
 
 async def get_all_players():
-    async with await _request("GET", "players/") as resp:
-        return await _safe_json(resp)
+    resp = await _request("GET", api("players/"), headers=HEADERS)
+    if resp is None:
+        return []
+    return await _safe_json(resp)
 
 async def add_win(discord_id: int):
-    async with await _request("POST", f"players/{discord_id}/add_win/") as resp:
-        return await _safe_json(resp)
+    resp = await _request("POST", api(f"players/{discord_id}/add_win/"), headers=HEADERS)
+    if resp is None:
+        return {"error": "network error"}
+    return await _safe_json(resp)
 
 async def get_top10_players():
-    async with await _request("GET", "players/top10/") as resp:
-        return await _safe_json(resp) if resp.status == 200 else []
+    resp = await _request("GET", api("players/top10/"), headers=HEADERS)
+    if resp is None or resp.status != 200:
+        return []
+    return await _safe_json(resp)
 
 # --- Matches ---
 
 async def create_match(payload: dict):
-    async with await _request("POST", "matches/", json=payload) as resp:
-        text = await resp.text()
-        if resp.status != 201:
-            logger.error(f"Ошибка при создании матча: {resp.status} - {text}")
-        else:
-            logger.success(f"Матч успешно создан: {text}")
-        try:
-            return json.loads(text)
-        except Exception as e:
-            logger.error(f"❌ Ошибка при разборе JSON: {e}")
-            return {}
+    resp = await _request("POST", api("matches/"), headers=HEADERS, json=payload)
+    if resp is None:
+        logger.error("Ошибка при создании матча: сеть недоступна")
+        return {}
+    text = await resp.text()
+    if resp.status != 201:
+        logger.error(f"Ошибка при создании матча: {resp.status} - {text}")
+    else:
+        logger.success(f"Матч успешно создан: {text}")
+    try:
+        return json.loads(text)
+    except Exception as e:
+        logger.error(f"❌ Ошибка при разборе JSON: {e}")
+        return {}
 
 async def get_all_matches():
-    async with await _request("GET", "matches/") as resp:
-        return await _safe_json(resp)
+    resp = await _request("GET", api("matches/"), headers=HEADERS)
+    if resp is None:
+        return []
+    return await _safe_json(resp)
 
 async def save_match_result(match_id: int, winner_team: int):
     payload = {"winner_team": winner_team}
-    async with await _request("POST", f"matches/{match_id}/set_winner/", json=payload) as resp:
-        if resp.status != 200:
-            logger.error(f"❌ Ошибка при сохранении результата матча: {resp.status} - {await resp.text()}")
-        return await _safe_json(resp)
+    resp = await _request("POST", api(f"matches/{match_id}/set_winner/"), headers=HEADERS, json=payload)
+    if resp is None:
+        return {"error": "network error"}
+    if resp.status != 200:
+        logger.error(f"❌ Ошибка при сохранении результата матча: {resp.status} - {await resp.text()}")
+    return await _safe_json(resp)
 
 # --- Lobbies ---
 
 async def create_lobby(data: dict):
-    async with await _request("POST", "lobbies/", json=data) as resp:
-        if resp.status != 201:
-            logger.warning(f"⚠ Не удалось создать лобби: {resp.status}")
-            return {}
-        return await _safe_json(resp)
+    resp = await _request("POST", api("lobbies/"), headers=HEADERS, json=data)
+    if resp is None:
+        return {}
+    if resp.status != 201:
+        logger.warning(f"⚠ Не удалось создать лобби: {resp.status}")
+        return {}
+    return await _safe_json(resp)
 
 async def update_lobby(lobby_id: int, data: dict):
-    async with await _request("PATCH", f"lobbies/{lobby_id}/", json=data) as resp:
-        if resp.status not in [200, 204]:
-            logger.warning(f"⚠ Не удалось обновить лобби {lobby_id}: {resp.status}")
-            return {}
-        try:
-            return await _safe_json(resp)
-        except:
-            return {}
+    resp = await _request("PATCH", api(f"lobbies/{lobby_id}/"), headers=HEADERS, json=data)
+    if resp is None:
+        return {}
+    if resp.status not in [200, 204]:
+        logger.warning(f"⚠ Не удалось обновить лобби {lobby_id}: {resp.status}")
+        return {}
+    return await _safe_json(resp)
 
 # --- Bans ---
 
 async def is_banned(discord_id: int) -> dict:
-    async with await _request("GET", "bans/is_banned/", params={"discord_id": discord_id}) as resp:
-        return await _safe_json(resp) if resp.status == 200 else {"banned": False}
+    resp = await _request("GET", api("bans/is_banned/"), headers=HEADERS, params={"discord_id": discord_id})
+    if resp is None:
+        return {"banned": False}
+    if resp.status != 200:
+        return {"banned": False}
+    return await _safe_json(resp)
 
 async def ban_player(discord_id: int, expires_at: datetime, reason: str, banned_by_id: int = None):
     profile = await get_player_profile(discord_id)

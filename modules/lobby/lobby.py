@@ -45,11 +45,10 @@ class JoinLobbyButton(View):
 
     @discord.ui.button(label="Присоединиться к лобби", style=discord.ButtonStyle.success)
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            profile = await api_client.get_player_profile(interaction.user.id)
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения профиля: {e}")
-            await interaction.response.send_message("⚠ Не удалось получить профиль. Попробуйте позже.", ephemeral=True)
+        profile = await api_client.get_player_profile(interaction.user.id)
+        if not profile or not profile.get("id"):
+            # Профиля нет (или сеть отвалилась) — спокойно открываем модалку
+            await interaction.response.send_modal(PlayerProfileModal(interaction, lobby=self.lobby))
             return
 
         if not profile or not profile.get("username") or not profile.get("rank"):
