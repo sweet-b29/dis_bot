@@ -32,6 +32,17 @@ class Draft:
         self.voice_channels = []
         self.team_sides = {}
         self.lobby = lobby
+        self.map_message: discord.Message | None = None  # сообщение с картинкой бана
+        self.last_banned_by: discord.Member | None = None  # кто банил последним
+
+    async def _ask_pick_side(self, chooser: discord.Member):
+        self.current_captain = chooser
+        view = SideSelectView(self, chooser)
+        await self.channel.send(
+            f"Выбор сторон — ход {chooser.mention}.",
+            view=view,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
     async def start(self):
         # даём писать капитанам
@@ -115,50 +126,49 @@ class Draft:
         )
 
         file = discord.File(image_path, filename="draft_dynamic.png")
-        embed = discord.Embed(title="УЧАСТНИКИ:", color=discord.Color.blurple())
-        embed.set_image(url="attachment://draft_dynamic.png")
-
-        # если draft_message ещё жив — редактируем его; иначе шлём новое
         try:
             if self.draft_message:
-                await self.draft_message.edit(content=None, view=None, embed=embed, attachments=[file])
+                await self.draft_message.edit(
+                    content=None, view=None,
+                    attachments=[file],
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
             else:
-                await self.channel.send(embed=embed, file=file)
+                await self.channel.send(
+                    file=file, content=None,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
         except Exception as e:
             logger.warning(f"Не удалось обновить сообщение драфта: {e}")
-            await self.channel.send(embed=embed, file=file)
+            await self.channel.send(
+                file=file, content=None,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
 
         await self.start_map_draft()
 
     async def start_map_draft(self):
+        # первым ходит второй капитан — как у тебя и было
         self.current_captain = self.captains[1]
+
         image_path = generate_map_ban_image(
             available_maps=self.available_maps,
             banned_maps=self.banned_maps,
             current_captain=self.current_captain.display_name
         )
         file = discord.File(image_path, filename="map_draft_dynamic.png")
-        embed = discord.Embed(
-            title="🗺 Драфт карт",
-            description=f"Ход капитана: {self.current_captain.mention}",
-            color=discord.Color.purple()
+
+        # одно «живое» сообщение: картинка + кнопки
+        self.map_message = await self.channel.send(
+            file=file,
+            content=None,
+            view=MapDraftView(self),
+            allowed_mentions=discord.AllowedMentions.none(),
         )
-        embed.set_image(url="attachment://map_draft_dynamic.png")
-        await self.channel.send(embed=embed, view=MapDraftView(self), file=file)
         logger.info("Начался драфт карт.")
 
     async def end_map_ban(self):
         logger.info(f"Финальная карта: {self.selected_map}")
-        await self.choose_sides()
-
-    async def choose_sides(self):
-        self.current_captain = self.captains[0]
-        embed = discord.Embed(
-            title="🧭 Выбор сторон",
-            description=f"{self.current_captain.mention}, выбери сторону для своей команды:",
-            color=discord.Color.orange()
-        )
-        self.side_message = await self.channel.send(embed=embed, view=SideSelectView(self, self.current_captain))
 
     async def finalize_match(self):
         """Сохраняем матч в Django. Перед этим валидируем профили всех участников."""
@@ -227,9 +237,11 @@ class Draft:
 
         if image_path and image_path.exists():
             file = File(image_path, filename="final_match_dynamic.png")
-            embed = Embed(title="🏁 Карта и стороны", color=discord.Color.green())
-            embed.set_image(url="attachment://final_match_dynamic.png")
-            await self.channel.send(embed=embed, file=file)
+            await self.channel.send(
+                file=file,
+                content=None,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
         else:
             await self.channel.send("⚠️ Картинка карты не найдена.")
 
@@ -318,29 +330,52 @@ class MapButton(discord.ui.Button):
             await interaction.response.send_message("❌ Сейчас не ваш ход выбирать карту.", ephemeral=True)
             return
 
+        # подтверждаем интеракцию, чтобы не было ошибок ack
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+
+        # применяем бан
+        if self.map_name not in self.draft.available_maps:
+            return
         self.draft.available_maps.remove(self.map_name)
         self.draft.banned_maps.append(self.map_name)
+        self.draft.last_banned_by = interaction.user
         logger.info(f"{interaction.user.display_name} забанил карту: {self.map_name}")
 
+        # осталась одна карта → определяем, кто выбирает сторону (ДРУГАЯ команда)
         if len(self.draft.available_maps) == 1:
             self.draft.selected_map = self.draft.available_maps[0]
-            await interaction.message.edit(view=None)
-            await self.draft.end_map_ban()
-        else:
-            self.draft.switch_captain()
-            image_path = generate_map_ban_image(
-                available_maps=self.draft.available_maps,
-                banned_maps=self.draft.banned_maps,
-                current_captain=self.draft.current_captain.display_name
-            )
+            # отключаем кнопки
+            try:
+                for c in self.view.children:
+                    c.disabled = True
+                if interaction.message:
+                    await interaction.message.edit(view=self.view)
+            except Exception:
+                pass
 
-            embed = discord.Embed(
-                description=f"Ход капитана: {self.draft.current_captain.mention}",
-                color=discord.Color.purple()
+            chooser = self.draft.captains[0] if self.draft.last_banned_by == self.draft.captains[1] else \
+            self.draft.captains[1]
+            await self.draft._ask_pick_side(chooser)
+            return
+
+        # иначе — обновляем картинку и передаём ход другому
+        self.draft.switch_captain()
+        img = generate_map_ban_image(
+            available_maps=self.draft.available_maps,
+            banned_maps=self.draft.banned_maps,
+            current_captain=self.draft.current_captain.display_name
+        )
+        file = discord.File(img, filename="map_draft_dynamic.png")
+
+        # редактируем то же сообщение с картинкой
+        if self.draft.map_message:
+            await self.draft.map_message.edit(
+                attachments=[file],
+                content=None,
+                view=MapDraftView(self.draft),
+                allowed_mentions=discord.AllowedMentions.none(),
             )
-            embed.set_image(url="attachment://map_draft_dynamic.png")
-            file = discord.File(image_path, filename="map_draft_dynamic.png")
-            await interaction.response.edit_message(embed=embed, view=MapDraftView(self.draft), attachments=[file])
 
 class SideSelectView(discord.ui.View):
     def __init__(self, draft: Draft, captain: discord.Member):

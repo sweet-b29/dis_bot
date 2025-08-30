@@ -137,13 +137,18 @@ class JoinLobbyButton(View):
 
         try:
             file = discord.File(image_path, filename="lobby_dynamic.png")
-            embed = discord.Embed(color=discord.Color.purple())
-            embed.set_image(url="attachment://lobby_dynamic.png")
-
             if lobby.image_message is None:
-                lobby.image_message = await lobby.channel.send(embed=embed, file=file)
+                lobby.image_message = await lobby.channel.send(
+                    file=file,
+                    content=None,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
             else:
-                await lobby.image_message.edit(embed=embed, attachments=[file])
+                await lobby.image_message.edit(
+                    content=None,
+                    attachments=[file],
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
         except Exception as e:
             logger.warning(f"⚠ Не удалось обновить embed: {e}")
 
@@ -245,13 +250,19 @@ class Lobby:
         image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
         file = discord.File(image_path, filename="lobby_dynamic.png")
-        embed = discord.Embed(color=discord.Color.purple())
-        embed.set_image(url="attachment://lobby_dynamic.png")
 
         if self.image_message is None:
-            self.image_message = await self.channel.send(embed=embed, file=file)
+            self.image_message = await self.channel.send(
+                file=file,
+                content=None,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
         else:
-            await self.image_message.edit(embed=embed, attachments=[file])
+            await self.image_message.edit(
+                content=None,
+                attachments=[file],
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
 
         if len(self.members) >= self.max_players and not self.draft_started:
             self.draft_started = True
@@ -330,14 +341,18 @@ class Lobby:
 
             image_path = generate_lobby_image(players_data, top_ids=top_ids)
             file = discord.File(image_path, filename="lobby_dynamic.png")
-
-            embed = discord.Embed(color=discord.Color.purple())
-            embed.set_image(url="attachment://lobby_dynamic.png")
-
             if self.image_message is None:
-                self.image_message = await self.channel.send(embed=embed, file=file)
+                self.image_message = await self.channel.send(
+                    file=file,
+                    content=None,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
             else:
-                await self.image_message.edit(embed=embed, attachments=[file])
+                await self.image_message.edit(
+                    content=None,
+                    attachments=[file],
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
 
             await self.start_draft()
 
