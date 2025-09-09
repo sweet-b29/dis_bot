@@ -170,6 +170,17 @@ class Lobby:
         self.teams: list[list[discord.Member]] = [[], []]
         self.max_players = max_players
         self.image_message: discord.Message | None = None
+        self._win_lock = asyncio.Lock()
+
+    async def _wait_match_id(self, timeout: float = 60.0) -> bool:
+        step = 0.2
+        waited = 0.0
+        while waited < timeout:
+            if getattr(self, "match_id", None):
+                return True
+            await asyncio.sleep(step)
+            waited += step
+        return False
 
     async def create_channel(self):
         try:
@@ -374,18 +385,18 @@ class Lobby:
             await interaction.followup.send("❌ ID матча не найден. Невозможно сохранить результат.", ephemeral=True)
             return
 
-        self.victory_registered = True
+        async with self._win_lock:
+            if self.victory_registered:
+                await interaction.followup.send("❌ Победа уже зафиксирована ранее.", ephemeral=True)
+                return
 
-        try:
-            await api_client.save_match_result(
-                match_id=self.match_id,
-                winner_team=team
-            )
+            ok, data = await api_client.save_match_result(self.match_id, team)
+            if not ok:
+                await interaction.followup.send("❌ Не удалось сохранить победу. Попробуйте ещё раз.", ephemeral=True)
+                return
+
+            self.victory_registered = True
             await interaction.followup.send("✅ Победа зафиксирована! Канал удалится через 10 секунд.", ephemeral=True)
-        except Exception as e:
-            logger.error(f"❌ Ошибка при сохранении победы: {e}")
-            await interaction.followup.send("❌ Ошибка при сохранении победы.", ephemeral=True)
-            return
 
         await asyncio.sleep(10)
         try:
