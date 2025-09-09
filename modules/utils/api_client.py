@@ -33,20 +33,22 @@ async def _request(method: str, path: str, **kwargs):
     assert _session is not None, "HTTP session is not set. Call api_client.set_http_session(session)."
     url = _url(path)
     retries = kwargs.pop("retries", 3)
-    backoff = kwargs.pop("backoff", 0.5)  # стартовый
+    backoff = kwargs.pop("backoff", 0.5)
+
     for attempt in range(retries + 1):
         try:
-            async with _session.request(method, url, headers=HEADERS, **kwargs) as resp:
-                if resp.status == 429 or 500 <= resp.status < 600:
-                    # читаем тело для логов
-                    body = await resp.text()
-                    wait = resp.headers.get("Retry-After")
-                    wait_s = float(wait) if wait else backoff * (2 ** attempt)
-                    logger.warning(f"{method} {url} → {resp.status}. Retry in {wait_s:.2f}s. Body: {body[:200]}")
-                    if attempt < retries:
-                        await asyncio.sleep(min(wait_s, 5.0))
-                        continue
-                return resp
+            resp = await _session.request(method, url, headers=HEADERS, **kwargs)
+            # серверная ошибка / rate limit → попробуем ретраить
+            if resp.status == 429 or 500 <= resp.status < 600:
+                body = await resp.text()  # читаем для логов
+                wait = resp.headers.get("Retry-After")
+                wait_s = float(wait) if wait else backoff * (2 ** attempt)
+                logger.warning(f"{method} {url} → {resp.status}. Retry in {wait_s:.2f}s. Body: {body[:200]}")
+                if attempt < retries:
+                    resp.close()           # закрыли этот ответ
+                    await asyncio.sleep(min(wait_s, 5.0))
+                    continue
+            return resp                  # ВАЖНО: возвращаем ОТКРЫТЫЙ resp; закрывать будет вызывающий код через `async with`
         except aiohttp.ClientError as e:
             logger.warning(f"{method} {url} network error: {e}")
             if attempt < retries:
@@ -198,3 +200,45 @@ async def ban_player(discord_id: int, expires_at: datetime, reason: str, banned_
             error = await resp.text()
             logger.error(f"❌ Не удалось выдать бан {discord_id}: {resp.status} - {error}")
             return False
+
+async def get_leaderboard_top(limit: int = 3) -> list[int]:
+    """
+    Возвращает упорядоченный список discord_id топ-игроков.
+    Порядок важен: [первое место, второе, третье].
+    Пробуем /players/leaderboard/, если нет — /players/top10/.
+    """
+    def _extract_ids(rows):
+        ids = []
+        for r in rows or []:
+            did = r.get("discord_id")
+            if not did and isinstance(r.get("player"), dict):
+                did = r["player"].get("discord_id")
+            if did:
+                try:
+                    ids.append(int(did))
+                except (TypeError, ValueError):
+                    pass
+        return ids
+
+    for endpoint in ("players/leaderboard/", "players/top10/"):
+        try:
+            async with await _request("GET", endpoint) as resp:
+                txt = await resp.text()
+                if resp.status != 200:
+                    logger.error(f"❌ GET {endpoint} {resp.status}: {txt}")
+                    continue
+                try:
+                    data = json.loads(txt)
+                except Exception:
+                    logger.error(f"❌ JSON parse failed for {endpoint}: {txt[:200]}")
+                    continue
+
+                # поддержка как списка, так и пагинированного ответа {"results":[...]}
+                rows = data.get("results") if isinstance(data, dict) else data
+                ids = _extract_ids(rows)
+                if ids:
+                    return ids[:limit]
+        except Exception as e:
+            logger.error(f"❌ leaderboard fetch failed for {endpoint}: {e}")
+
+    return []
