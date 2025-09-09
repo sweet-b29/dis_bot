@@ -15,6 +15,23 @@ DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=15, connect=10, sock_read=10)
 
 _session: aiohttp.ClientSession | None = None
 
+def set_http_session(session: aiohttp.ClientSession):
+    """
+    Инъекция готовой aiohttp-сессии из бота.
+    Вызывается из main.py: api_client.set_http_session(bot.http_session)
+    """
+    global _session
+    _session = session
+
+async def close_http_session():
+    """
+    Закрыть глобальную сессию аккуратно при остановке бота.
+    """
+    global _session
+    if _session and not _session.closed:
+        await _session.close()
+    _session = None
+
 async def _safe_json(resp: aiohttp.ClientResponse) -> dict:
     text = await resp.text()
     try:
@@ -38,23 +55,23 @@ async def _request(method: str, path: str, **kwargs):
     for attempt in range(retries + 1):
         try:
             resp = await _session.request(method, url, headers=HEADERS, **kwargs)
-            # серверная ошибка / rate limit → попробуем ретраить
             if resp.status == 429 or 500 <= resp.status < 600:
-                body = await resp.text()  # читаем для логов
+                body = await resp.text()
                 wait = resp.headers.get("Retry-After")
                 wait_s = float(wait) if wait else backoff * (2 ** attempt)
                 logger.warning(f"{method} {url} → {resp.status}. Retry in {wait_s:.2f}s. Body: {body[:200]}")
                 if attempt < retries:
-                    resp.close()           # закрыли этот ответ
+                    resp.close()
                     await asyncio.sleep(min(wait_s, 5.0))
                     continue
-            return resp                  # ВАЖНО: возвращаем ОТКРЫТЫЙ resp; закрывать будет вызывающий код через `async with`
+            return resp  # вернули открытый ответ — закрывается снаружи через `async with`
         except aiohttp.ClientError as e:
             logger.warning(f"{method} {url} network error: {e}")
             if attempt < retries:
                 await asyncio.sleep(backoff * (2 ** attempt))
                 continue
             raise
+
 
 def ensure_api_config():
     missing = []
@@ -232,13 +249,10 @@ async def get_leaderboard_top(limit: int = 3) -> list[int]:
                 except Exception:
                     logger.error(f"❌ JSON parse failed for {endpoint}: {txt[:200]}")
                     continue
-
-                # поддержка как списка, так и пагинированного ответа {"results":[...]}
                 rows = data.get("results") if isinstance(data, dict) else data
                 ids = _extract_ids(rows)
                 if ids:
                     return ids[:limit]
         except Exception as e:
             logger.error(f"❌ leaderboard fetch failed for {endpoint}: {e}")
-
     return []

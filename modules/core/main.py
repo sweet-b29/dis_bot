@@ -80,7 +80,9 @@ async def setup_hook():
 
     async def _close_with_http():
         try:
-            if hasattr(bot, "http_session") and bot.http_session:
+            if hasattr(api_client, "close_http_session"):
+                await api_client.close_http_session()
+            if hasattr(bot, "http_session") and bot.http_session and not bot.http_session.closed:
                 await bot.http_session.close()
         finally:
             await _original_close()
