@@ -28,8 +28,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 # ALLOWED_HOSTS и CSRF
-ALLOWED_HOSTS = [host for host in config('ALLOWED_HOSTS', default='.up.railway.app').split(',') if host]
-CSRF_TRUSTED_ORIGINS = [f"https://{h}" for h in ALLOWED_HOSTS if h and not h.startswith('.')]
+ALLOWED_HOSTS = [h for h in config('ALLOWED_HOSTS', default='127.0.0.1,localhost,.up.railway.app').split(',') if h]
+CSRF_TRUSTED_ORIGINS = (
+    [f"http://{h}" for h in ALLOWED_HOSTS if h and not h.startswith('.')] +
+    [f"https://{h}" for h in ALLOWED_HOSTS if h and not h.startswith('.')]
+)
 
 
 # Application definition

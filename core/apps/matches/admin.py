@@ -1,8 +1,9 @@
+from django import forms
 from django.contrib import admin
 from django.utils.safestring import mark_safe
 from .models import Match, MatchEvent
-from django import forms
 
+# ----- форма c запретом дублей игрока в обеих командах -----
 class MatchAdminForm(forms.ModelForm):
     class Meta:
         model = Match
@@ -14,14 +15,10 @@ class MatchAdminForm(forms.ModelForm):
         t2 = set(cleaned.get("team_2").values_list("pk", flat=True)) if cleaned.get("team_2") else set()
         dup = t1 & t2
         if dup:
-            # можешь красиво вывести имена игроков
             raise forms.ValidationError("Игрок не может входить в обе команды одного матча.")
         return cleaned
 
-@admin.register(Match)
-class MatchAdmin(admin.ModelAdmin):
-    form = MatchAdminForm
-
+# ----- inline событий матча -----
 class MatchEventInline(admin.TabularInline):
     model = MatchEvent
     extra = 0
@@ -29,8 +26,10 @@ class MatchEventInline(admin.TabularInline):
     can_delete = False
     show_change_link = True
 
+# ----- единственная регистрация Match -----
 @admin.register(Match)
 class MatchAdmin(admin.ModelAdmin):
+    form = MatchAdminForm
     list_display = ("id", "map_name", "winner_team", "created_at", "captain_1", "captain_2")
     list_filter = ("winner_team", "map_name", "created_at")
     search_fields = ("id", "captain_1__username", "captain_2__username")
@@ -38,6 +37,7 @@ class MatchAdmin(admin.ModelAdmin):
     inlines = (MatchEventInline,)
     readonly_fields = ("created_at",)
 
+# ----- регистрация событий -----
 @admin.register(MatchEvent)
 class MatchEventAdmin(admin.ModelAdmin):
     list_display = ("id", "match", "type", "created_at", "actor", "short_data")
