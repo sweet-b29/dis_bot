@@ -27,32 +27,51 @@ class MatchViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def set_winner(self, request, pk=None):
         match = self.get_object()
-        serializer = SetWinnerSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        # ИДЕМПОТЕНТНОСТЬ: если победитель уже установлен — запрещаем повтор
         if match.winner_team is not None:
             return Response({"detail": "Winner already set"}, status=status.HTTP_400_BAD_REQUEST)
 
-        winner = serializer.validated_data['winner_team']
-        winners_qs = match.team_1.all() if winner == 1 else match.team_2.all()
-        losers_qs  = match.team_2.all() if winner == 1 else match.team_1.all()
+        try:
+            winner = int(request.data.get("winner_team"))
+        except (TypeError, ValueError):
+            return Response({"detail": "winner_team must be 1 or 2"}, status=status.HTTP_400_BAD_REQUEST)
+        if winner not in (1, 2):
+            return Response({"detail": "winner_team must be 1 or 2"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # составы
+        team1_ids = set(match.team_1.values_list("id", flat=True))
+        team2_ids = set(match.team_2.values_list("id", flat=True))
+        if not team1_ids or not team2_ids:
+            return Response({"detail": "Both teams must have players"}, status=status.HTTP_400_BAD_REQUEST)
+
+        winners_ids = team1_ids if winner == 1 else team2_ids
+        losers_ids = team2_ids if winner == 1 else team1_ids
+
+        # дубли: если игрок попал в обе команды, убираем его из проигравших
+        duplicates = winners_ids & losers_ids
+        if duplicates:
+            logger.warning(f"Match {match.id}: players present in both teams: {sorted(list(duplicates))}")
+            losers_ids -= duplicates
 
         with transaction.atomic():
             match.winner_team = winner
             match.save(update_fields=["winner_team"])
 
-            # Обновляем статистику игроков один раз
-            for p in winners_qs.select_for_update():
-                p.wins += 1
-                p.matches += 1
-                p.save(update_fields=["wins", "matches"])
+            Player = match.team_1.model  # модель игроков
+            if winners_ids:
+                Player.objects.filter(id__in=winners_ids).update(
+                    wins=F("wins") + 1,
+                    matches=F("matches") + 1,
+                )
+            if losers_ids:
+                Player.objects.filter(id__in=losers_ids).update(
+                    matches=F("matches") + 1,
+                )
 
-            for p in losers_qs.select_for_update():
-                p.matches += 1
-                p.save(update_fields=["matches"])
+        # журнал события (если MatchEvent есть)
+        try:
+            from .models import MatchEvent
+            MatchEvent.objects.create(match=match, type="win_set", data={"winner_team": winner})
+        except Exception:
+            pass
 
-        actor = request.user if request.user.is_authenticated else None
-        log_match_event(match, MatchEvent.Type.WIN_SET, actor=actor, winner_team=winner)
-        return Response({'status': 'updated'}, status=status.HTTP_200_OK)
+        return Response({"status": "ok"}, status=status.HTTP_200_OK)

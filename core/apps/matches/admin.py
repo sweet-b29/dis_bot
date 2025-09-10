@@ -1,6 +1,26 @@
 from django.contrib import admin
 from django.utils.safestring import mark_safe
 from .models import Match, MatchEvent
+from django import forms
+
+class MatchAdminForm(forms.ModelForm):
+    class Meta:
+        model = Match
+        fields = "__all__"
+
+    def clean(self):
+        cleaned = super().clean()
+        t1 = set(cleaned.get("team_1").values_list("pk", flat=True)) if cleaned.get("team_1") else set()
+        t2 = set(cleaned.get("team_2").values_list("pk", flat=True)) if cleaned.get("team_2") else set()
+        dup = t1 & t2
+        if dup:
+            # можешь красиво вывести имена игроков
+            raise forms.ValidationError("Игрок не может входить в обе команды одного матча.")
+        return cleaned
+
+@admin.register(Match)
+class MatchAdmin(admin.ModelAdmin):
+    form = MatchAdminForm
 
 class MatchEventInline(admin.TabularInline):
     model = MatchEvent

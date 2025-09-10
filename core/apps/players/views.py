@@ -7,6 +7,7 @@ from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAdminUser
 from .models import Player, PlayerBan
 from .serializers import PlayerSerializer, PlayerBanSerializer
+from django.db.models import F, FloatField, ExpressionWrapper, Case, When, Value
 
 
 class PlayerViewSet(viewsets.ModelViewSet):
@@ -28,9 +29,31 @@ class PlayerViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='top10')
     def top10(self, request):
-        top_players = Player.objects.order_by('-wins', '-matches')[:10]
-        serializer = self.get_serializer(top_players, many=True)
-        return Response(serializer.data)
+        return self._leaderboard(limit=10)
+
+    @action(detail=False, methods=['get'], url_path='leaderboard')
+    def leaderboard(self, request):
+        # алиас, чтобы бот мог звать /players/leaderboard/
+        return self._leaderboard(limit=10)
+
+    def _leaderboard(self, limit: int):
+        qs = Player.objects.annotate(
+            winrate=Case(
+                When(matches__gt=0,
+                     then=ExpressionWrapper(100.0 * F('wins') / F('matches'), output_field=FloatField())),
+                default=Value(0.0), output_field=FloatField(),
+            )
+        ).order_by('-wins', '-winrate', '-matches', 'username')[:limit]
+
+        data = [{
+            "discord_id": p.discord_id,
+            "username": p.username,
+            "rank": p.rank,
+            "wins": p.wins,
+            "matches": p.matches,
+            "winrate": round(p.winrate),
+        } for p in qs]
+        return Response(data)
 
     @action(detail=True, methods=['post'], url_path='set_wins', lookup_field='discord_id')
     def set_wins(self, request, discord_id=None):
