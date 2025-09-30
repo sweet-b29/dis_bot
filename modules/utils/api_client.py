@@ -153,18 +153,17 @@ async def get_all_matches():
         return await _safe_json(resp)
 
 async def save_match_result(match_id: int, winner_team: int):
-    payload = {"winner_team": winner_team}
-    async with get_session() as session:
-        async with session.post(api(f"matches/{match_id}/set_winner/"), json=payload) as resp:
-            text = await resp.text()
-            ok = (resp.status == 200)
-            if not ok:
-                logger.error(f"❌ set_winner {match_id} failed: {resp.status} - {text}")
-            try:
-                data = json.loads(text)
-            except Exception:
-                data = {}
-            return ok, data
+    payload = {"winner_team": winner_team}  # 1 или 2
+    async with await _request("POST", f"matches/{match_id}/set_winner/", json=payload) as resp:
+        text = await resp.text()
+        ok = (resp.status == 200)
+        if not ok:
+            logger.error(f"❌ set_winner {match_id} failed: {resp.status} - {text}")
+        try:
+            data = json.loads(text)
+        except Exception:
+            data = {}
+        return ok, data
 
 
 # --- Lobbies ---

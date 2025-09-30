@@ -5,6 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from .models import Match, MatchEvent
 from .serializers import MatchSerializer, SetWinnerSerializer
+from django.db.models import F
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +31,12 @@ class MatchViewSet(viewsets.ModelViewSet):
         if match.winner_team is not None:
             return Response({"detail": "Winner already set"}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            winner = int(request.data.get("winner_team"))
-        except (TypeError, ValueError):
-            return Response({"detail": "winner_team must be 1 or 2"}, status=status.HTTP_400_BAD_REQUEST)
-        if winner not in (1, 2):
-            return Response({"detail": "winner_team must be 1 or 2"}, status=status.HTTP_400_BAD_REQUEST)
+        # валидируем тело запроса строго через сериалайзер (только 1 или 2)
+        ser = SetWinnerSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        winner = ser.validated_data["winner_team"]  # int: 1 или 2
 
-            # составы
+        # составы
         team1_ids = set(match.team_1.values_list("id", flat=True))
         team2_ids = set(match.team_2.values_list("id", flat=True))
         if not team1_ids or not team2_ids:
@@ -46,11 +45,13 @@ class MatchViewSet(viewsets.ModelViewSet):
         winners_ids = team1_ids if winner == 1 else team2_ids
         losers_ids = team2_ids if winner == 1 else team1_ids
 
-        # дубли: если игрок попал в обе команды, убираем его из проигравших
+        # дубли: если игрок в обеих командах — исключаем из проигравших
         duplicates = winners_ids & losers_ids
         if duplicates:
             logger.warning(f"Match {match.id}: players present in both teams: {sorted(list(duplicates))}")
             losers_ids -= duplicates
+
+        from .models import MatchEvent  # локальный импорт на всякий случай
 
         with transaction.atomic():
             match.winner_team = winner
@@ -67,11 +68,10 @@ class MatchViewSet(viewsets.ModelViewSet):
                     matches=F("matches") + 1,
                 )
 
-        # журнал события (если MatchEvent есть)
-        try:
-            from .models import MatchEvent
-            MatchEvent.objects.create(match=match, type="win_set", data={"winner_team": winner})
-        except Exception:
-            pass
+            # журналируем
+            try:
+                MatchEvent.objects.create(match=match, type="win_set", data={"winner_team": winner})
+            except Exception:
+                logger.exception("Failed to write MatchEvent")
 
         return Response({"status": "ok"}, status=status.HTTP_200_OK)

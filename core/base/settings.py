@@ -186,7 +186,3 @@ SOCIALACCOUNT_PROVIDERS = {
     }
 }
 
-ALLOWED_HOSTS = [h for h in config('ALLOWED_HOSTS', default='127.0.0.1,localhost,.up.railway.app').split(',') if h]
-CSRF_TRUSTED_ORIGINS = [f"http://{h}" for h in ALLOWED_HOSTS if h and not h.startswith('.')] + \
-                       [f"https://{h}" for h in ALLOWED_HOSTS if h and not h.startswith('.')]
-
