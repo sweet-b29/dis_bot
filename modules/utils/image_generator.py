@@ -190,55 +190,98 @@ def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) 
     draw = ImageDraw.Draw(base_img)
     width, height = base_img.size
 
-    # ===== разметка «как на макете» =====
-    PADDING_X = 96         # левый край колонки с контентом
-    LIST_TOP  = 320        # старт списка (под заголовком из шаблона)
-    ROW_H     = 120        # высота строки
-    GAP       = 24
-    NUM_W     = 56         # ширина колонки под номер
+    # -------- стиль/разметка --------
+    PADDING_X = 88
+    LIST_MIN_TOP = 300
 
-    ICON_W    = 72
-    ICON_COL_X_RATIO = 0.62
-    ICON_X = min(int(width * ICON_COL_X_RATIO), width - PADDING_X - ICON_W)
+    ROW_H = 96
+    ROW_GAP = 14
 
-    number_font = get_font(48)
+    NUM_W = 48
+    ICON_SIZE = 60
+    ICON_PAD = 8
 
-    # область под имя: от «после номера» до колонки иконки
-    name_x = PADDING_X + NUM_W + GAP
-    name_w = ICON_X - name_x - GAP
+    CONTENT_LEFT = PADDING_X
+    CONTENT_RIGHT = width - PADDING_X
+
+    ICON_X = CONTENT_RIGHT - ICON_SIZE
+    NAME_X = CONTENT_LEFT + NUM_W + 18
+    NAME_W = (ICON_X - 16) - NAME_X
+
+    number_font = get_font(40)
+
+    def _text_h(text: str, font) -> int:
+        try:
+            b = draw.textbbox((0, 0), text, font=font)
+            return b[3] - b[1]
+        except Exception:
+            try:
+                b = font.getbbox(text)
+                return b[3] - b[1]
+            except Exception:
+                return getattr(font, "size", 36)
+
+    # центрируем список по вертикали (но не выше заголовка)
+    n = max(len(players), 1)
+    list_h = n * ROW_H + (n - 1) * ROW_GAP
+    start_y = max(LIST_MIN_TOP, (height - list_h) // 2)
+
+    # если игроков нет — рисуем заглушку
+    if not players:
+        empty_font = get_font(44)
+        txt = "Нет участников"
+        tw = draw.textlength(txt, font=empty_font)
+        _draw_text(draw, ((width - tw) // 2, start_y + 20), txt, empty_font, fill="#D0D0D0", stroke=3)
+        base_img.save(output_path)
+        return output_path
 
     for idx, p in enumerate(players, start=1):
         display_name = str(p.get("display_name") or "").strip()
-        label = format_username(p.get("username"), display_name)  # <-- ровно один раз формируем "nick(name)"
+        label = format_username(p.get("username"), display_name)
+
         rank = _rank_base(p.get("rank") or "Unranked")
+        icon_path = get_icon_path(rank) or _rank_icon_path(rank)
 
-        y = LIST_TOP + (idx - 1) * ROW_H
-
-        # номер
-        _draw_text(draw, (PADDING_X, y), f"{idx}", number_font, fill="white")
-
-        # имя: крупно, но не выходя за name_w
-        name_font = _fit_font(draw, label, name_w, start=64, min_size=32)
         pid = p.get("discord_id") or p.get("id")
         name_color = _color_for_top(pid, top_ids) or "white"
-        _draw_text(draw, (name_x, y), label, name_font, fill=name_color)
 
-        # иконка ранга — в фиксированной колонке
-        icon_y = y + (ROW_H - ICON_W) // 2
-        icon_path = _rank_icon_path(rank)
-        if icon_path and icon_path.exists():
+        y = start_y + (idx - 1) * (ROW_H + ROW_GAP)
+
+        # карточка строки
+        row_box = (CONTENT_LEFT - 18, y - 6, CONTENT_RIGHT + 12, y + ROW_H)
+        draw.rounded_rectangle(
+            row_box,
+            radius=18,
+            fill=(0, 0, 0, 110),
+            outline=(255, 255, 255, 28),
+            width=2
+        )
+
+        # номер (по центру строки)
+        num_y = y + (ROW_H - _text_h(str(idx), number_font)) // 2 - 2
+        _draw_text(draw, (CONTENT_LEFT, num_y), f"{idx}", number_font, fill="white", stroke=2)
+
+        # ник (по центру строки)
+        name_font = _fit_font(draw, label, NAME_W, start=54, min_size=30)
+        name_y = y + (ROW_H - _text_h(label, name_font)) // 2 - 3
+        _draw_text(draw, (NAME_X, name_y), label, name_font, fill=name_color, stroke=2)
+
+        # подложка под иконку (чтобы она читалась на любом фоне)
+        icon_y = y + (ROW_H - ICON_SIZE) // 2
+        bg_box = (ICON_X - ICON_PAD, icon_y - ICON_PAD, ICON_X + ICON_SIZE + ICON_PAD, icon_y + ICON_SIZE + ICON_PAD)
+        draw.rounded_rectangle(bg_box, radius=16, fill=(0, 0, 0, 140), outline=(255, 255, 255, 35), width=2)
+
+        # иконка ранга (качественный ресайз!)
+        if icon_path and Path(icon_path).exists():
             try:
-                icon = Image.open(icon_path).resize((ICON_W, ICON_W)).convert("RGBA")
+                icon = Image.open(icon_path).convert("RGBA").resize((ICON_SIZE, ICON_SIZE), Image.LANCZOS)
                 base_img.paste(icon, (ICON_X, icon_y), icon)
             except Exception:
-                rank_font = get_font(32)
-                _draw_text(draw, (ICON_X, y), rank, rank_font, fill="#B3B3B3")
-        else:
-            rank_font = get_font(32)
-            _draw_text(draw, (ICON_X, y), rank, rank_font, fill="#B3B3B3")
+                pass
 
     base_img.save(output_path)
     return output_path
+
 
 def generate_draft_image(
     players: list[dict],
@@ -287,26 +330,47 @@ def generate_draft_image(
         name_max_w = (x_icon - GAP) - x_text  # доступная ширина под ник
 
         for p in team_data:
-            username = str(p.get("username") or "—")
-            display_name = str(p.get("display_name") or "").strip()
+            # одно место формирования имени: nick(name) без дублей
             name = _player_label(p)
+
+            # нормализуем ранг для иконки: "Immortal 3" -> "Immortal"
             rank = _rank_base(p.get("rank", "Unranked"))
 
             # цвет ника (топ-3 → золото/серебро/бронза; иначе белый)
-            pid       = p.get("discord_id") or p.get("id")
+            pid = p.get("discord_id") or p.get("id")
             top_color = _color_for_top(pid, top_ids)
-            color     = top_color or "white"
+            color = top_color or "white"
 
             # подбираем шрифт под ширину колонки
             font = _fit_font(draw, name, name_max_w, start=NICK_START, min_size=NICK_MIN)
-            _draw_text(draw, (x_text, y), name, font=font, fill=color)
+
+            # вертикальное центрирование текста внутри строки LINE_H
+            try:
+                bbox = draw.textbbox((0, 0), name, font=font)
+                text_h = bbox[3] - bbox[1]
+            except Exception:
+                text_h = getattr(font, "size", 28)
+
+            text_y = y + (LINE_H - text_h) // 2 - 2
+            _draw_text(draw, (x_text, text_y), name, font=font, fill=color)
 
             # иконка ранга по центру строки
             icon_path = get_icon_path(rank)
             if icon_path:
                 try:
-                    icon = Image.open(icon_path).resize((RANK_SIZE, RANK_SIZE)).convert("RGBA")
+                    icon = Image.open(icon_path).convert("RGBA").resize((RANK_SIZE, RANK_SIZE), Image.LANCZOS)
                     icon_y = y + (LINE_H - RANK_SIZE) // 2
+
+                    # лёгкая подложка под иконку (чтобы читалась на любом фоне)
+                    pad = 6
+                    draw.rounded_rectangle(
+                        (x_icon - pad, icon_y - pad, x_icon + RANK_SIZE + pad, icon_y + RANK_SIZE + pad),
+                        radius=12,
+                        fill=(0, 0, 0, 140),
+                        outline=(255, 255, 255, 28),
+                        width=2
+                    )
+
                     image.paste(icon, (x_icon, icon_y), icon)
                 except Exception:
                     pass
@@ -457,52 +521,68 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
     image = Image.open(base_path).convert("RGBA")
     draw = ImageDraw.Draw(image)
 
-    # Разметка
-    num_font   = get_font(44)
-    stat_font  = get_font(40)
-    icon_size  = 56
-    row_h      = 90
-    start_y    = 180
+    num_font   = get_font(42)
+    stat_font  = get_font(36)
+
+    icon_size  = 54
+    row_h      = 86
+    row_gap    = 10
+    start_y    = 170
 
     number_x   = 70
     name_x     = 150
-    rank_icon_x = 660   # колонка иконки ранга
-    wins_x     = 780    # колонка "0W | 0%"
+    rank_icon_x = 660
+    wins_x     = 780
+
+    def _text_h(text: str, font) -> int:
+        try:
+            b = draw.textbbox((0, 0), text, font=font)
+            return b[3] - b[1]
+        except Exception:
+            return getattr(font, "size", 32)
 
     for place, player in enumerate(players, start=1):
-        y = start_y + (place - 1) * row_h
+        y = start_y + (place - 1) * (row_h + row_gap)
 
         display_name = str(player.get("display_name") or "").strip()
-        name = format_username(player.get("username"), display_name)  # <-- один раз
-        rank = _rank_base(player.get("rank") or "Unranked")  # <-- чтобы "Immortal 3" не ломал иконку
-        wins     = int(player.get("wins", 0))
-        matches  = int(player.get("matches", 0))
+        username = format_username(player.get("username"), display_name)
+
+        rank = _rank_base(player.get("rank") or "Unranked")
+        wins = int(player.get("wins", 0))
+        matches = int(player.get("matches", 0))
+
         winrate = round((wins / matches) * 100, 1) if matches > 0 else 0
         winrate_s = (f"{winrate:.1f}").rstrip("0").rstrip(".")
 
-        # Цвет по месту (ТОП-3)
         c = _place_color(place)
 
-        # Номер и имя (c обводкой)
-        _draw_text(draw, (number_x, y), f"{place}.", num_font, fill=c, stroke=2)
+        # фон строки
+        row_left = 54
+        row_right = image.width - 54
+        draw.rounded_rectangle(
+            (row_left, y - 6, row_right, y + row_h),
+            radius=16,
+            fill=(0, 0, 0, 100),
+            outline=(255, 255, 255, 24),
+            width=2
+        )
 
-        # имя должно влезть между name_x и rank_icon_x
+        _draw_text(draw, (number_x, y + (row_h - _text_h(f"{place}.", num_font)) // 2 - 2), f"{place}.", num_font, fill=c, stroke=2)
+
         name_max_w = (rank_icon_x - 24) - name_x
-        name_font = _fit_font(draw, name, name_max_w, start=42, min_size=28)
-        _draw_text(draw, (name_x, y), name, name_font, fill=c, stroke=2)
+        name_font  = _fit_font(draw, username, name_max_w, start=40, min_size=26)
+        _draw_text(draw, (name_x, y + (row_h - _text_h(username, name_font)) // 2 - 2), username, name_font, fill=c, stroke=2)
 
-        # Иконка ранга по центру строки
         icon_path = get_icon_path(rank)
         if icon_path:
             try:
-                icon = Image.open(icon_path).resize((icon_size, icon_size)).convert("RGBA")
+                icon = Image.open(icon_path).convert("RGBA").resize((icon_size, icon_size), Image.LANCZOS)
                 icon_y = y + (row_h - icon_size) // 2
                 image.paste(icon, (rank_icon_x, icon_y), icon)
             except Exception:
                 pass
 
-        # Победы и винрейт
-        _draw_text(draw, (wins_x, y), f"{wins}W | {winrate_s}%", stat_font, fill="white", stroke=2)
+        _draw_text(draw, (wins_x, y + (row_h - _text_h("0W | 0%", stat_font)) // 2 - 2), f"{wins}W | {winrate_s}%", stat_font, fill="white", stroke=2)
 
     image.save(output_path)
     return output_path
