@@ -2,6 +2,7 @@ import discord
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from pathlib import Path
 from functools import lru_cache
+import re
 
 
 # Пути к файлам
@@ -32,11 +33,27 @@ def _rank_base(rank: str) -> str:
     return r.split()[0].capitalize()
 
 def _player_label(p: dict) -> str:
-    username = str(p.get("username") or "—")
+    username = str(p.get("username") or "—").strip()
     display_name = str(p.get("display_name") or "").strip()
-    if display_name and display_name != username:
-        return f"{username} ({display_name})"
-    return username
+
+    if not display_name:
+        return username
+
+    # Если username == display_name — ничего не добавляем
+    if username.lower() == display_name.lower():
+        return username
+
+    # Убираем уже существующие "(display_name)" в username (с любыми пробелами), чтобы не было дубля
+    pattern = re.compile(rf"\s*\(\s*{re.escape(display_name)}\s*\)\s*", flags=re.IGNORECASE)
+    cleaned = pattern.sub("", username).strip()
+
+    # Если вдруг всё вычистили (маловероятно) — вернём просто имя
+    if not cleaned:
+        return display_name
+
+    # Итоговый формат без пробела перед скобками: sweet(Юрачка)
+    return f"{cleaned}({display_name})"
+
 
 
 def _find_map_image(map_name: str) -> Path | None:
