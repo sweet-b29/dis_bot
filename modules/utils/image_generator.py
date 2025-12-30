@@ -25,6 +25,8 @@ CANDIDATE_FONT_PATHS = [
 def _norm(s: str) -> str:
     return (s or "").lower().replace(" ", "").replace("-", "").replace("_", "")
 
+
+
 def _rank_base(rank: str) -> str:
     r = str(rank or "").strip()
     if not r:
@@ -33,28 +35,7 @@ def _rank_base(rank: str) -> str:
     return r.split()[0].capitalize()
 
 def _player_label(p: dict) -> str:
-    username = str(p.get("username") or "—").strip()
-    display_name = str(p.get("display_name") or "").strip()
-
-    if not display_name:
-        return username
-
-    # Если username == display_name — ничего не добавляем
-    if username.lower() == display_name.lower():
-        return username
-
-    # Убираем уже существующие "(display_name)" в username (с любыми пробелами), чтобы не было дубля
-    pattern = re.compile(rf"\s*\(\s*{re.escape(display_name)}\s*\)\s*", flags=re.IGNORECASE)
-    cleaned = pattern.sub("", username).strip()
-
-    # Если вдруг всё вычистили (маловероятно) — вернём просто имя
-    if not cleaned:
-        return display_name
-
-    # Итоговый формат без пробела перед скобками: sweet(Юрачка)
-    return f"{cleaned}({display_name})"
-
-
+    return format_username(p.get("username"), p.get("display_name"))
 
 def _find_map_image(map_name: str) -> Path | None:
     """Находим файл карты (webp/png/jpg) в MAP_DIRS, без учёта регистра."""
@@ -161,6 +142,42 @@ def _rank_icon_path(rank: str) -> Path | None:
             return p
     return None
 
+def format_username(username: str, display_name: str | None = None) -> str:
+    """
+    Делает ровно 'nick(name)' без дублей.
+    Если username уже содержит '(...)' в конце — удаляет это (сколько угодно раз).
+    display_name можно не передавать: тогда возьмём имя из скобок, если оно было.
+    """
+    u = str(username or "—").strip()
+    dn = str(display_name or "").strip()
+
+    # Забираем ВСЕ хвостовые скобки: "nick (a) (a)" -> base="nick", groups=["a","a"]
+    groups = []
+    while True:
+        m = re.search(r"\s*\(\s*([^)]+?)\s*\)\s*$", u)
+        if not m:
+            break
+        groups.append(m.group(1).strip())
+        u = u[:m.start()].strip()
+
+    # Что поставить в скобки:
+    suffix = dn if dn else (groups[0] if groups else "")
+
+    # Если нет suffix — возвращаем как есть (base либо исходное)
+    if not suffix:
+        return u or "—"
+
+    # Если base пустой — возвращаем только suffix
+    if not u:
+        return suffix
+
+    # Если base == suffix — не дублируем
+    if u.lower() == suffix.lower():
+        return u
+
+    # Итог без пробела: sweet(Юрачка)
+    return f"{u}({suffix})"
+
 def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) -> Path:
     top_ids = top_ids or []
 
@@ -191,22 +208,17 @@ def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) 
     name_w = ICON_X - name_x - GAP
 
     for idx, p in enumerate(players, start=1):
-        username = label = _player_label(p)
-        display_name =str(p.get("display_name") or "").strip()
-        rank     = _rank_base(p.get("rank") or "Unranked")
-        pid      = p.get("id")
-        is_top   = pid in top_ids
+        display_name = str(p.get("display_name") or "").strip()
+        label = format_username(p.get("username"), display_name)  # <-- ровно один раз формируем "nick(name)"
+        rank = _rank_base(p.get("rank") or "Unranked")
 
         y = LIST_TOP + (idx - 1) * ROW_H
 
         # номер
         _draw_text(draw, (PADDING_X, y), f"{idx}", number_font, fill="white")
 
-        # показываем Discord-имя рядом с Riot-ником (если отличается)
-        label = f"{username} ({display_name})" if display_name and display_name != username else username
-
         # имя: крупно, но не выходя за name_w
-        name_font  = _fit_font(draw, label, name_w, start=64, min_size=32)
+        name_font = _fit_font(draw, label, name_w, start=64, min_size=32)
         pid = p.get("discord_id") or p.get("id")
         name_color = _color_for_top(pid, top_ids) or "white"
         _draw_text(draw, (name_x, y), label, name_font, fill=name_color)
@@ -460,10 +472,9 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
     for place, player in enumerate(players, start=1):
         y = start_y + (place - 1) * row_h
 
-        username = _player_label(player)
         display_name = str(player.get("display_name") or "").strip()
-        name = f"{username} ({display_name})" if display_name and display_name != username else username
-        rank = str(player.get("rank") or "Unranked")
+        name = format_username(player.get("username"), display_name)  # <-- один раз
+        rank = _rank_base(player.get("rank") or "Unranked")  # <-- чтобы "Immortal 3" не ломал иконку
         wins     = int(player.get("wins", 0))
         matches  = int(player.get("matches", 0))
         winrate = round((wins / matches) * 100, 1) if matches > 0 else 0
