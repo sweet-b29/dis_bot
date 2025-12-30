@@ -1,84 +1,92 @@
-import discord
-from aiohttp import payload_type
-from discord.ext import commands
-from discord import app_commands
-from modules.utils import api_client
 import os
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
-GUILD_ID = int(os.getenv("GUILD_ID", 0))
-def _parse_allowed_roles(raw: str) -> list[int]:
-    out: list[int] = []
-    for part in (raw or "").split(","):
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+from modules.utils import api_client
+
+
+def _parse_role_ids(env_name: str) -> list[int]:
+    raw = os.getenv(env_name, "")
+    result: list[int] = []
+    for part in raw.split(","):
         part = part.strip()
-        if part.isdigit():
-            out.append(int(part))
-    return out
+        if not part:
+            continue
+        try:
+            result.append(int(part))
+        except ValueError:
+            continue
+    return result
 
-ALLOWED_ROLES = _parse_allowed_roles(os.getenv("ALLOWED_ROLES", ""))
 
-@app_commands.guilds(discord.Object(id=GUILD_ID))
-class Admin(commands.GroupCog, name="admin"):
-    def __init__(self, bot):
-        self.bot = bot
+ALLOWED_ROLES: list[int] = _parse_role_ids("ALLOWED_ROLES")
 
-    async def cog_check(self, interaction: discord.Interaction) -> bool:
-        member = interaction.user
-        perms = getattr(member, "guild_permissions", None)
-        if perms and (perms.administrator or perms.manage_guild):
+
+def admin_only():
+    """
+    Доступ:
+    - всегда разрешаем Discord Administrator
+    - иначе проверяем роли из ALLOWED_ROLES
+    """
+    async def predicate(interaction: discord.Interaction) -> bool:
+        user = interaction.user
+
+        # safety
+        if not isinstance(user, discord.Member):
+            return False
+
+        # админ сервера всегда может
+        if user.guild_permissions.administrator:
             return True
+
+        # если список ролей пуст — значит доступ закрыт всем, кроме администратора
         if not ALLOWED_ROLES:
             return False
-        return any(role.id in ALLOWED_ROLES for role in member.roles)
 
-    @app_commands.command(name="changerank", description="Изменить ранг игрока (ник — опционально)")
-    @app_commands.describe(user="Участник", rank="Ранг", username="Riot-ник (опционально)")
-    async def changerank(self, interaction: discord.Interaction, user: discord.Member, rank: str, username: str = None):
-        rank_raw = " ".join(rank.strip().split())
-        if not rank_raw:
-            await interaction.response.send_message("❌ Ранг не может быть пустым.", ephemeral=True)
+        return any(role.id in ALLOWED_ROLES for role in user.roles)
+
+    return app_commands.check(predicate)
+
+
+class Admin(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @app_commands.command(name="changerank", description="Изменить ранг игрока (без изменения ника)")
+    @app_commands.describe(user="Участник", rank="Ранг (например: Immortal 2)")
+    @admin_only()
+    async def changerank(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        rank: str,
+    ):
+        rank = rank.strip()
+        if not (1 <= len(rank) <= 32):
+            await interaction.response.send_message("❌ Ранг должен быть 1–32 символа.", ephemeral=True)
             return
-
-        payload = {
-            "discord_id": user.id,
-            "rank": rank_raw.title(),
-            "create_if_not_exist": True,
-        }
-
-        if username is not None:
-            username = username.strip()
-            if not (1 <= len(username) <= 32):
-                await interaction.response.send_message("❌ Ник должен быть 1–32 символа.", ephemeral=True)
-                return
-            payload["username"] = username
 
         await interaction.response.defer(ephemeral=True, thinking=True)
-
         try:
-            await api_client.update_player_profile(**payload)
+            await api_client.update_player_profile(discord_id=user.id, username=None, rank=rank)
         except Exception as e:
-            await interaction.followup.send(f"❌ Не удалось обновить профиль в БД: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Не удалось обновить ранг в БД: {e}", ephemeral=True)
             return
 
-        fresh = await api_client.get_player_profile(user.id) or {}
-        final_username = fresh.get("username") or (username or "—")
-        final_rank = fresh.get("rank") or rank_raw.title()
+        await interaction.followup.send(f"✅ Ранг обновлён: {user.mention} → **{rank}**", ephemeral=True)
 
-        if username is None:
-            await interaction.followup.send(
-                f"✏️ Обновлён ранг {user.mention}: **{final_rank}** (ник не менялся: **{final_username}**).",
-                ephemeral=True
-            )
-        else:
-            await interaction.followup.send(
-                f"✏️ Обновлён профиль {user.mention}: **{final_username}**, ранг **{final_rank}**",
-                ephemeral=True
-            )
-
-    @app_commands.command(name="changenick", description="Изменить Riot-ник игрока")
+    @app_commands.command(name="changenick", description="Изменить Riot-ник игрока (без изменения ранга)")
     @app_commands.describe(user="Участник", username="Новый Riot-ник")
-    async def changenick(self, interaction: discord.Interaction, user: discord.Member, username: str):
+    @admin_only()
+    async def changenick(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        username: str,
+    ):
         username = username.strip()
         if not (1 <= len(username) <= 32):
             await interaction.response.send_message("❌ Ник должен быть 1–32 символа.", ephemeral=True)
@@ -88,50 +96,64 @@ class Admin(commands.GroupCog, name="admin"):
 
         # 1) PATCH только username (без rank)
         try:
-            await api_client.update_player_profile(
-                discord_id=user.id,
-                username=username,
-                create_if_not_exist=True
-            )
+            await api_client.update_player_profile(discord_id=user.id, username=username, rank=None)
         except Exception as e:
-            await interaction.followup.send(f"❌ Не удалось обновить профиль в БД: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Не удалось обновить ник в БД: {e}", ephemeral=True)
             return
 
-        # 2) верифицируем чтением
-        fresh = await api_client.get_player_profile(user.id)
+        # 2) контрольное чтение
+        try:
+            fresh = await api_client.get_player_profile(user.id)
+        except Exception:
+            fresh = {}
+
         if fresh and fresh.get("username") == username:
             await interaction.followup.send(
-                f"💾 Ник в профиле **обновлён**: {user.mention} → **{username}**.",
+                f"✅ Ник обновлён: {user.mention} → **{username}**",
                 ephemeral=True
             )
         else:
             await interaction.followup.send(
-                "⚠ Ник в профиле не изменился. Проверь Django:\n"
-                "• `players/serializers.py` — поле `username` включено в `fields` и `read_only=False`\n"
-                "• `players/views.py` — PATCH идёт с `partial=True` и без принудительного требование `rank`\n"
-                "• нет ли уникального конфликта по `username`",
+                "⚠ Ник не подтвердился чтением из API. Проверь Django:\n"
+                "• `players/serializers.py` — поле `username` не read-only\n"
+                "• `players/views.py` — PATCH с `partial=True`\n",
                 ephemeral=True
             )
 
     @app_commands.command(name="changewins", description="Установить количество побед игрока")
     @app_commands.describe(user="Участник", wins="Новое количество побед")
-    async def changewins(self, interaction: discord.Interaction, user: discord.Member, wins: int):
-        await api_client.set_player_wins(user.id, wins)
-        await interaction.response.send_message(
-            f"🏆 Победы {user.mention} установлены на **{wins}**.",
-            ephemeral=True
-        )
+    @admin_only()
+    async def changewins(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        wins: int,
+    ):
+        if wins < 0:
+            await interaction.response.send_message("❌ Победы не могут быть отрицательными.", ephemeral=True)
+            return
 
-    @app_commands.command(name="ban", description="Забанить игрока по Discord ID")
-    @app_commands.describe(
-        discord_id="ID игрока в Discord (правый клик → Copy ID)",
-        duration="Длительность бана: 10m / 2h / 1d",
-        reason="Причина бана"
-    )
-    async def ban(self, interaction: discord.Interaction, discord_id: str, duration: str, reason: str):
-        await interaction.response.defer(thinking=True, ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await api_client.set_player_wins(user.id, wins)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Не удалось установить победы: {e}", ephemeral=True)
+            return
 
-        # --- 1) Парсим длительность (10m / 2h / 1d)
+        await interaction.followup.send(f"🏆 Победы установлены: {user.mention} → **{wins}**", ephemeral=True)
+
+    @app_commands.command(name="ban", description="Забанить игрока по discord_id на время (10m/2h/1d)")
+    @app_commands.describe(discord_id="Discord ID игрока", duration="Длительность: 10m/2h/1d", reason="Причина")
+    @admin_only()
+    async def ban(
+        self,
+        interaction: discord.Interaction,
+        discord_id: str,
+        duration: str,
+        reason: str = "No reason",
+    ):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
         s = duration.strip().lower()
         if len(s) < 2 or not s[:-1].isdigit() or s[-1] not in ("m", "h", "d"):
             await interaction.followup.send("❌ Неверный формат. Используй: `10m`, `2h`, `1d`.", ephemeral=True)
@@ -146,74 +168,43 @@ class Admin(commands.GroupCog, name="admin"):
         else:
             delta = timedelta(days=n)
 
-        # --- 2) Время окончания бана в UTC (aware)
         now_utc = datetime.now(timezone.utc)
-        expires_at = now_utc + delta  # aware UTC
+        expires_at = now_utc + delta
 
-        # --- 3) Вызываем API
-        ok = await api_client.ban_player(
-            discord_id=int(discord_id),
-            expires_at=expires_at,
-            reason=reason,
-        )
-
-        # --- 4) Готовим красивое сообщение с местным временем + остатком
-        def humanize(td: timedelta) -> str:
-            # нормализуем до положительного
-            total = int(td.total_seconds())
-            if total < 0:
-                total = 0
-            d, rem = divmod(total, 86400)
-            h, rem = divmod(rem, 3600)
-            m, _ = divmod(rem, 60)
-            out = []
-            if d: out.append(f"{d}д")
-            if h: out.append(f"{h}ч")
-            if m or not out: out.append(f"{m}м")
-            return " ".join(out)
-
-        # локальная таймзона
-        tz_name = os.getenv("BOT_TZ", "Asia/Almaty")
         try:
-            local_tz = ZoneInfo(tz_name)
-        except Exception:
-            local_tz = ZoneInfo("UTC")
-            tz_name = "UTC"
-
-        local_exp = expires_at.astimezone(local_tz)
-        left_str = humanize(expires_at - now_utc)
+            ok = await api_client.ban_player(
+                discord_id=int(discord_id),
+                expires_at=expires_at,
+                reason=reason,
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка при бане: {e}", ephemeral=True)
+            return
 
         if ok:
-            # Примеры: 15 авг 2025, 10:18 (Asia/Almaty, UTC+6) — осталось: 1д 2ч 5м
-            utc_str = expires_at.strftime("%Y-%m-%d %H:%M UTC")
-            local_str = local_exp.strftime("%Y-%m-%d %H:%M")
-            # смещение в часах для красоты
-            offset_hours = int(local_exp.utcoffset().total_seconds() // 3600)
-            sign = "+" if offset_hours >= 0 else "-"
-            offset_fmt = f"UTC{sign}{abs(offset_hours)}"
-
-            msg = (
-                f"✅ Игрок `{discord_id}` забанен до **{local_str}** "
-                f"(*{tz_name}, {offset_fmt}*). Осталось: **{left_str}**.\n"
-                f"🕒 UTC: {utc_str}\n"
-                f"📝 Причина: **{reason}**"
+            await interaction.followup.send(
+                f"🔐 Бан выдан: **{discord_id}**\n"
+                f"⏳ До: **{expires_at.isoformat()}** (UTC)\n"
+                f"📝 Причина: **{reason}**",
+                ephemeral=True
             )
-            await interaction.followup.send(msg, ephemeral=True)
         else:
             await interaction.followup.send("❌ Не удалось выдать бан. Возможно, профиль не найден.", ephemeral=True)
 
     @app_commands.command(name="adminhelp", description="Показать команды администратора")
+    @admin_only()
     async def adminhelp(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="🔧 Админ-команды",
-            description="Список доступных команд:",
+            description="Доступны верхнеуровневые команды:",
             color=discord.Color.red()
         )
-        embed.add_field(name="/admin changerank", value="✏ Изменить ранг", inline=False)
-        embed.add_field(name="/admin changenick", value="🔁 Изменить Riot-ник", inline=False)
-        embed.add_field(name="/admin changewins", value="🏆 Установить победы", inline=False)
-        embed.add_field(name="/admin ban", value="🔐 Забанить игрока", inline=False)
+        embed.add_field(name="/changerank", value="Изменить ранг игрока", inline=False)
+        embed.add_field(name="/changenick", value="Изменить Riot-ник игрока", inline=False)
+        embed.add_field(name="/changewins", value="Установить победы игрока", inline=False)
+        embed.add_field(name="/ban", value="Бан по discord_id на время", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-async def setup(bot):
+
+async def setup(bot: commands.Bot):
     await bot.add_cog(Admin(bot))
