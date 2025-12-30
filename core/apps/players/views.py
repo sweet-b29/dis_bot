@@ -134,6 +134,17 @@ class PlayerViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(player)
         return Response(serializer.data, status=201 if created else 200)
 
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="reset_stats",
+        authentication_classes=[TokenAuthentication],
+        permission_classes=[IsAdminUser],
+    )
+    def reset_stats(self, request):
+        updated = Player.objects.update(wins=0, matches=0)
+        return Response({"ok": True, "updated": updated})
+
 
 class PlayerBanViewSet(viewsets.ModelViewSet):
     queryset = PlayerBan.objects.all()

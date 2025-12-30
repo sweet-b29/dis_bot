@@ -3,7 +3,6 @@ from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from pathlib import Path
 from functools import lru_cache
 
-from django.contrib.admin import display
 
 # Пути к файлам
 BASE_IMAGE_PATH = Path(__file__).resolve().parents[1] / "pictures" / "lobby_base.png"
