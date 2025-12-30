@@ -51,7 +51,7 @@ class PlayerViewSet(viewsets.ModelViewSet):
             "rank": p.rank,
             "wins": p.wins,
             "matches": p.matches,
-            "winrate": round(p.winrate),
+            "winrate": round(p.winrate, 1),
         } for p in qs]
         return Response(data)
 
@@ -96,8 +96,8 @@ class PlayerViewSet(viewsets.ModelViewSet):
                     return Response({"error": "username required to create a profile"}, status=400)
                 player = Player.objects.create(
                     discord_id=discord_id,
-                    username=username,
-                    rank=rank or Player._meta.get_field("rank").default or "Unranked",
+                    username=str(username).strip(),
+                    rank=(str(rank).strip() if rank else (Player._meta.get_field("rank").default or "Unranked")),
                 )
                 created = True
             else:
@@ -108,7 +108,18 @@ class PlayerViewSet(viewsets.ModelViewSet):
             username = str(username).strip()
             if not (1 <= len(username) <= 32):
                 return Response({"error": "username must be 1..32 chars"}, status=400)
-            player.username = username
+
+            # фикс времени смены ника — только если реально изменился
+            if player.username != username:
+                player.username = username
+                if hasattr(player, "last_name_change"):
+                    player.last_name_change = timezone.now()
+
+        if rank is not None:
+            rank = str(rank).strip()
+            if not (1 <= len(rank) <= 50):
+                return Response({"error": "rank must be 1..50 chars"}, status=400)
+            player.rank = rank
 
         try:
             player.save()

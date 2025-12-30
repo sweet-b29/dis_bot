@@ -100,18 +100,19 @@ async def get_player_profile(discord_id: int) -> dict:
         return await _safe_json(resp)
 
 async def update_player_profile(discord_id: int, username: str | None = None, rank: str | None = None, create_if_not_exist: bool = False) -> dict:
-    payload = {"discord_id": discord_id, "create_if_not_exist": create_if_not_exist}
+    payload: dict = {"discord_id": discord_id, "create_if_not_exist": create_if_not_exist}
     if username is not None:
         payload["username"] = username
     if rank is not None:
         payload["rank"] = rank
-    async with await _request("PATCH", "players/update_profile/", json=payload) as resp:
+
+    async with (await _request("PATCH", "players/update_profile/", json=payload) as resp):
         body = await resp.text()
         if resp.status not in (200, 201):
             logger.error(f"PATCH update_profile -> {resp.status}: {body[:400]}")
             raise RuntimeError(f"update_profile failed: {resp.status}")
         try:
-            return await _safe_json(resp)
+            return json.loads(body) if body else {}
         except Exception:
             logger.error("Bad JSON in update_profile response")
             return {}

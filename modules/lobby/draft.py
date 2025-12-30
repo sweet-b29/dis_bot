@@ -107,16 +107,26 @@ class Draft:
         for member in [self.captains[0]] + self.teams[self.captains[0]]:
             profile = await api_client.get_player_profile(member.id)
             if profile:
-                players_data.append({"id": profile["id"], "discord_id": member.id,
-                                     "username": profile["username"], "rank": profile["rank"],
-                                     "team": "captain_1"})
+                players_data.append({
+                    "id": profile["id"],
+                    "discord_id": member.id,
+                    "username": profile["username"],
+                    "display_name": member.display_name,
+                    "rank": profile["rank"],
+                    "team": "captain_1",
+                })
 
         for member in [self.captains[1]] + self.teams[self.captains[1]]:
             profile = await api_client.get_player_profile(member.id)
             if profile:
-                players_data.append({"id": profile["id"], "discord_id": member.id,
-                                     "username": profile["username"], "rank": profile["rank"],
-                                     "team": "captain_2"})
+                players_data.append({
+                    "id": profile["id"],
+                    "discord_id": member.id,
+                    "username": profile["username"],
+                    "display_name": member.display_name,
+                    "rank": profile["rank"],
+                    "team": "captain_2",
+                })
 
         # Генерируем и отправляем картинку
         capt1 = await api_client.get_player_profile(self.captains[0].id) or {}

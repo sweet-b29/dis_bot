@@ -39,6 +39,13 @@ class MatchViewSet(viewsets.ModelViewSet):
         # составы
         team1_ids = set(match.team_1.values_list("id", flat=True))
         team2_ids = set(match.team_2.values_list("id", flat=True))
+
+        # капитаны тоже участники матча (часто в payload команды передаются без капитанов)
+        if getattr(match, "captain_1_id", None):
+            team1_ids.add(match.captain_1_id)
+        if getattr(match, "captain_2_id", None):
+            team2_ids.add(match.captain_2_id)
+
         if not team1_ids or not team2_ids:
             return Response({"detail": "Both teams must have players"}, status=status.HTTP_400_BAD_REQUEST)
 

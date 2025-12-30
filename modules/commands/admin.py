@@ -1,4 +1,5 @@
 import discord
+from aiohttp import payload_type
 from discord.ext import commands
 from discord import app_commands
 from modules.utils import api_client
@@ -7,7 +8,15 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 GUILD_ID = int(os.getenv("GUILD_ID", 0))
-ALLOWED_ROLES = list(map(int, os.getenv("ALLOWED_ROLES", "").split(",")))
+def _parse_allowed_roles(raw: str) -> list[int]:
+    out: list[int] = []
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.append(int(part))
+    return out
+
+ALLOWED_ROLES = _parse_allowed_roles(os.getenv("ALLOWED_ROLES", ""))
 
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 class Admin(commands.GroupCog, name="admin"):
@@ -15,17 +24,57 @@ class Admin(commands.GroupCog, name="admin"):
         self.bot = bot
 
     async def cog_check(self, interaction: discord.Interaction) -> bool:
-        return any(role.id in ALLOWED_ROLES for role in interaction.user.roles)
+        member = interaction.user
+        perms = getattr(member, "guild_permissions", None)
+        if perms and (perms.administrator or perms.manage_guild):
+            return True
+        if not ALLOWED_ROLES:
+            return False
+        return any(role.id in ALLOWED_ROLES for role in member.roles)
 
-    @app_commands.command(name="changerank", description="Изменить ранг и Riot-ник игрока")
+    @app_commands.command(name="changerank", description="Изменить ранг игрока (ник — опционально)")
     @app_commands.describe(user="Участник", rank="Ранг", username="Riot-ник (опционально)")
     async def changerank(self, interaction: discord.Interaction, user: discord.Member, rank: str, username: str = None):
-        username = username or user.display_name
-        await api_client.update_player_profile(user.id, username, rank.capitalize())
-        await interaction.response.send_message(
-            f"✏️ Обновлён профиль {user.mention}: **{username}**, ранг **{rank.capitalize()}**",
-            ephemeral=True
-        )
+        rank_raw = " ".join(rank.strip().split())
+        if not rank_raw:
+            await interaction.response.send_message("❌ Ранг не может быть пустым.", ephemeral=True)
+            return
+
+        payload = {
+            "discord_id": user.id,
+            "rank": rank_raw.title(),
+            "create_if_not_exist": True,
+        }
+
+        if username is not None:
+            username = username.strip()
+            if not (1 <= len(username) <= 32):
+                await interaction.response.send_message("❌ Ник должен быть 1–32 символа.", ephemeral=True)
+                return
+            payload["username"] = username
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            await api_client.update_player_profile(**payload)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Не удалось обновить профиль в БД: {e}", ephemeral=True)
+            return
+
+        fresh = await api_client.get_player_profile(user.id) or {}
+        final_username = fresh.get("username") or (username or "—")
+        final_rank = fresh.get("rank") or rank_raw.title()
+
+        if username is None:
+            await interaction.followup.send(
+                f"✏️ Обновлён ранг {user.mention}: **{final_rank}** (ник не менялся: **{final_username}**).",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                f"✏️ Обновлён профиль {user.mention}: **{final_username}**, ранг **{final_rank}**",
+                ephemeral=True
+            )
 
     @app_commands.command(name="changenick", description="Изменить Riot-ник игрока")
     @app_commands.describe(user="Участник", username="Новый Riot-ник")

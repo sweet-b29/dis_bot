@@ -120,16 +120,16 @@ class JoinLobbyButton(View):
             profile = t.result() or {}
             players_data.append({
                 "id": profile.get("id"),
-                "discord_id": m.id if isinstance(m, discord.Member) else profile.get("discord_id"),
+                "discord_id": m.id,
                 "username": profile.get("username", "—"),
+                "display_name": m.display_name,
                 "rank": profile.get("rank", "—"),
                 "wins": profile.get("wins", 0),
+                "matches": profile.get("matches", 0),
             })
 
         # Топ по победам
         top_ids = await get_leaderboard_top(3)  # список discord_id топ-3
-        image_path = generate_lobby_image(players_data, top_ids=top_ids)
-
         image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
         try:
@@ -241,16 +241,16 @@ class Lobby:
             profile = await profiles_cache.get(m.id)
             players_data.append({
                 "id": profile.get("id"),
-                "discord_id": m.id if isinstance(m, discord.Member) else profile.get("discord_id"),
+                "discord_id": m.id,
                 "username": profile.get("username", "—"),
+                "display_name": m.display_name,
                 "rank": profile.get("rank", "—"),
                 "wins": profile.get("wins", 0),
+                "matches": profile.get("matches", 0),
             })
 
         # Генерируем изображение
         top_ids = await get_leaderboard_top(3)  # список discord_id топ-3
-        image_path = generate_lobby_image(players_data, top_ids=top_ids)
-
         image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
         file = discord.File(image_path, filename="lobby_dynamic.png")
@@ -304,9 +304,9 @@ class Lobby:
             player_profiles = []
             for member, task in tasks.items():
                 profile = task.result() or {}
-                rank = profile.get("rank", "Unranked")
+                rank_raw = str(profile.get("rank", "Unranked"))
+                rank = rank_raw.split()[0].capitalize()
                 player_profiles.append((member, rank))
-
             # Сортируем по убыванию ранга
             sorted_players = sorted(
                 player_profiles,
@@ -327,20 +327,21 @@ class Lobby:
 
             # 🔁 Генерация картинки финального состава
             players_data = []
-            for m in self.captains + self.members:
+            for m in self.members:
                 profile = await profiles_cache.get(m.id)
                 players_data.append({
                     "id": profile.get("id"),
-                    "discord_id": m.id if isinstance(m, discord.Member) else profile.get("discord_id"),
+                    "discord_id": m.id,
                     "username": profile.get("username", "—"),
+                    "display_name": m.display_name,
                     "rank": profile.get("rank", "—"),
                     "wins": profile.get("wins", 0),
+                    "matches": profile.get("matches", 0),
                 })
 
             top_ids = await get_leaderboard_top(3)  # список discord_id топ-3
             image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
-            image_path = generate_lobby_image(players_data, top_ids=top_ids)
             file = discord.File(image_path, filename="lobby_dynamic.png")
             if self.image_message is None:
                 self.image_message = await self.channel.send(

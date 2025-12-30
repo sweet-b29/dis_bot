@@ -3,6 +3,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from pathlib import Path
 from functools import lru_cache
 
+from django.contrib.admin import display
+
 # Пути к файлам
 BASE_IMAGE_PATH = Path(__file__).resolve().parents[1] / "pictures" / "lobby_base.png"
 OUTPUT_IMAGE_PATH = Path(__file__).resolve().parents[1] / "pictures" / "lobby_dynamic.png"
@@ -22,6 +24,21 @@ CANDIDATE_FONT_PATHS = [
 
 def _norm(s: str) -> str:
     return (s or "").lower().replace(" ", "").replace("-", "").replace("_", "")
+
+def _rank_base(rank: str) -> str:
+    r = str(rank or "").strip()
+    if not r:
+        return "Unranked"
+    # "Immortal 3" -> "Immortal"
+    return r.split()[0].capitalize()
+
+def _player_label(p: dict) -> str:
+    username = str(p.get("username") or "—")
+    display_name = str(p.get("display_name") or "").strip()
+    if display_name and display_name != username:
+        return f"{username} ({display_name})"
+    return username
+
 
 def _find_map_image(map_name: str) -> Path | None:
     """Находим файл карты (webp/png/jpg) в MAP_DIRS, без учёта регистра."""
@@ -158,8 +175,9 @@ def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) 
     name_w = ICON_X - name_x - GAP
 
     for idx, p in enumerate(players, start=1):
-        username = str(p.get("username") or "—")
-        rank     = str(p.get("rank") or "Unranked")
+        username = label = _player_label(p)
+        display_name =str(p.get("display_name") or "").strip()
+        rank     = _rank_base(p.get("rank") or "Unranked")
         pid      = p.get("id")
         is_top   = pid in top_ids
 
@@ -168,11 +186,14 @@ def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) 
         # номер
         _draw_text(draw, (PADDING_X, y), f"{idx}", number_font, fill="white")
 
+        # показываем Discord-имя рядом с Riot-ником (если отличается)
+        label = f"{username} ({display_name})" if display_name and display_name != username else username
+
         # имя: крупно, но не выходя за name_w
-        name_font  = _fit_font(draw, username, name_w, start=64, min_size=32)
+        name_font  = _fit_font(draw, label, name_w, start=64, min_size=32)
         pid = p.get("discord_id") or p.get("id")
         name_color = _color_for_top(pid, top_ids) or "white"
-        _draw_text(draw, (name_x, y), username, name_font, fill=name_color)
+        _draw_text(draw, (name_x, y), label, name_font, fill=name_color)
 
         # иконка ранга — в фиксированной колонке
         icon_y = y + (ROW_H - ICON_W) // 2
@@ -238,8 +259,10 @@ def generate_draft_image(
         name_max_w = (x_icon - GAP) - x_text  # доступная ширина под ник
 
         for p in team_data:
-            name = p.get("username", "—")
-            rank = p.get("rank", "Unranked")
+            username = str(p.get("username") or "—")
+            display_name = str(p.get("display_name") or "").strip()
+            name = _player_label(p)
+            rank = _rank_base(p.get("rank", "Unranked"))
 
             # цвет ника (топ-3 → золото/серебро/бронза; иначе белый)
             pid       = p.get("discord_id") or p.get("id")
@@ -421,11 +444,14 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
     for place, player in enumerate(players, start=1):
         y = start_y + (place - 1) * row_h
 
-        username = str(player.get("username") or "—")
-        rank     = str(player.get("rank") or "Unranked")
+        username = _player_label(player)
+        display_name = str(player.get("display_name") or "").strip()
+        name = f"{username} ({display_name})" if display_name and display_name != username else username
+        rank = str(player.get("rank") or "Unranked")
         wins     = int(player.get("wins", 0))
         matches  = int(player.get("matches", 0))
-        winrate  = int(wins / matches * 100) if matches > 0 else 0
+        winrate = round((wins / matches) * 100, 1) if matches > 0 else 0
+        winrate_s = (f"{winrate:.1f}").rstrip("0").rstrip(".")
 
         # Цвет по месту (ТОП-3)
         c = _place_color(place)
@@ -435,8 +461,8 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
 
         # имя должно влезть между name_x и rank_icon_x
         name_max_w = (rank_icon_x - 24) - name_x
-        name_font  = _fit_font(draw, username, name_max_w, start=42, min_size=28)
-        _draw_text(draw, (name_x, y), username, name_font, fill=c, stroke=2)
+        name_font = _fit_font(draw, name, name_max_w, start=42, min_size=28)
+        _draw_text(draw, (name_x, y), name, name_font, fill=c, stroke=2)
 
         # Иконка ранга по центру строки
         icon_path = get_icon_path(rank)
@@ -449,7 +475,7 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
                 pass
 
         # Победы и винрейт
-        _draw_text(draw, (wins_x, y), f"{wins}W | {winrate}%", stat_font, fill="white", stroke=2)
+        _draw_text(draw, (wins_x, y), f"{wins}W | {winrate_s}%", stat_font, fill="white", stroke=2)
 
     image.save(output_path)
     return output_path
