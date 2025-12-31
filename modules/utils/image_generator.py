@@ -393,25 +393,67 @@ def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], cu
     GRID_COLS = 4
     GRID_HGAP = 16
     GRID_VGAP = 16
-    CELL_WIDTH = (WIDTH - PADDING*2 - GRID_HGAP*(GRID_COLS-1)) // GRID_COLS
+    CELL_WIDTH = (WIDTH - PADDING * 2 - GRID_HGAP * (GRID_COLS - 1)) // GRID_COLS
     CELL_HEIGHT = 160
     TITLE_Y = 24
 
-    MAP_DIRS = [
-        Path(__file__).resolve().parents[1] / "maps",
-        Path(__file__).resolve().parents[1] / "pictures" / "maps",
-    ]
     output_path = Path(__file__).resolve().parents[1] / "pictures" / "map_draft_dynamic.png"
 
-    image = Image.new("RGBA", (WIDTH, HEIGHT), (30, 30, 30, 255))
+    image = Image.new("RGBA", (WIDTH, HEIGHT), (18, 18, 18, 255))
     draw = ImageDraw.Draw(image)
 
-    title_font = get_font(48)
+    title_font = get_font(52)
     draw.text((PADDING, TITLE_Y), f"Бан карт — Ход: {current_captain}", font=title_font, fill="white")
 
+    # порядок/набор карт: оставляем фиксированный, чтобы сетка была всегда одинаковая
     all_maps = ["Ascent","Bind","Haven","Split","Icebox","Breeze","Fracture","Lotus","Sunset","Abyss","Pearl"]
-    font = get_font(26)
 
+    name_font = get_font(28)
+    badge_font = get_font(22)
+    order_font = get_font(20)
+
+    banned_set = {m for m in banned_maps}
+    available_set = {m for m in available_maps}
+
+    def apply_bottom_gradient(tile_rgba: Image.Image, max_alpha: int = 190, start_frac: float = 0.58) -> Image.Image:
+        """Чёрный градиент снизу для читабельности названия."""
+        w, h = tile_rgba.size
+        overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        od = ImageDraw.Draw(overlay)
+
+        start_y = int(h * start_frac)
+        denom = max(1, h - start_y)
+        for yy in range(start_y, h):
+            a = int(max_alpha * ((yy - start_y) / denom))
+            od.line([(0, yy), (w, yy)], fill=(0, 0, 0, a))
+
+        return Image.alpha_composite(tile_rgba, overlay)
+
+    def draw_badge(x: int, y: int, text: str, fill=(220, 60, 60, 220)):
+        """Бейдж в левом верхнем углу."""
+        pad_x, pad_y = 10, 6
+        tw = draw.textlength(text, font=badge_font)
+        bx1, by1 = x + 10, y + 10
+        bx2, by2 = int(bx1 + tw + pad_x * 2), by1 + 34
+
+        draw.rounded_rectangle((bx1, by1, bx2, by2), radius=10, fill=fill, outline=(255, 255, 255, 35), width=2)
+        _draw_text(draw, (bx1 + pad_x, by1 + 5), text, badge_font, fill="white", stroke=2)
+
+    def draw_order(x: int, y: int, n: int):
+        """Номер бана (1,2,3...) справа сверху."""
+        r = 14
+        cx, cy = x + CELL_WIDTH - 22, y + 22
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(0, 0, 0, 160), outline=(255, 255, 255, 40), width=2)
+        t = str(n)
+        tw = draw.textlength(t, font=order_font)
+        _draw_text(draw, (cx - tw / 2, cy - 10), t, order_font, fill="white", stroke=2)
+
+    def draw_thin_x(x: int, y: int):
+        """Тонкий полупрозрачный X (не режет глаза и не убивает читаемость)."""
+        col = (255, 70, 70, 120)
+        w = 5
+        draw.line((x + 10, y + 10, x + CELL_WIDTH - 10, y + CELL_HEIGHT - 10), fill=col, width=w)
+        draw.line((x + 10, y + CELL_HEIGHT - 10, x + CELL_WIDTH - 10, y + 10), fill=col, width=w)
 
     for idx, map_name in enumerate(all_maps):
         col = idx % GRID_COLS
@@ -419,25 +461,55 @@ def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], cu
         x = PADDING + col * (CELL_WIDTH + GRID_HGAP)
         y = 120 + row * (CELL_HEIGHT + GRID_VGAP)
 
+        # фон-заглушка
+        tile = Image.new("RGBA", (CELL_WIDTH, CELL_HEIGHT), (35, 35, 35, 255))
+
+        # картинка карты
         icon_path = _find_map_image(map_name)
         if icon_path:
             try:
-                tile = Image.open(icon_path).convert("RGB").resize((CELL_WIDTH, CELL_HEIGHT), Image.LANCZOS)
-                if map_name in banned_maps:
-                    tile = ImageEnhance.Brightness(tile).enhance(0.30)
-                image.paste(tile, (x, y))
+                raw = Image.open(icon_path).convert("RGBA").resize((CELL_WIDTH, CELL_HEIGHT), Image.LANCZOS)
+                tile = raw
             except Exception as e:
                 print(f"⚠ Ошибка загрузки карты {map_name}: {e}")
 
-        if map_name in banned_maps:
-            draw.line((x, y, x + CELL_WIDTH, y + CELL_HEIGHT), fill="red", width=5)
-            draw.line((x, y + CELL_HEIGHT, x + CELL_WIDTH, y), fill="red", width=5)
+        # градиент под текст
+        tile = apply_bottom_gradient(tile)
 
-        draw.text((x + 12, y + CELL_HEIGHT - 30), map_name, font=font, fill="white")
+        # если забанено — затемняем сильнее
+        is_banned = map_name in banned_set
+        if is_banned:
+            overlay = Image.new("RGBA", (CELL_WIDTH, CELL_HEIGHT), (0, 0, 0, 150))
+            tile = Image.alpha_composite(tile, overlay)
+
+        # вставляем тайл
+        image.paste(tile, (x, y))
+
+        # рамка: доступные подсвечиваем, забаненные — нейтральная
+        if is_banned:
+            draw.rounded_rectangle((x, y, x + CELL_WIDTH, y + CELL_HEIGHT), radius=14,
+                                   outline=(255, 255, 255, 40), width=2)
+        else:
+            # чуть ярче, чтобы выделить "живые" карты
+            draw.rounded_rectangle((x, y, x + CELL_WIDTH, y + CELL_HEIGHT), radius=14,
+                                   outline=(255, 255, 255, 90), width=3)
+
+        # подпись карты (поверх градиента)
+        _draw_text(draw, (x + 12, y + CELL_HEIGHT - 34), map_name, name_font, fill="white", stroke=2)
+
+        # отметки бана
+        if is_banned:
+            draw_badge(x, y, "BANNED")
+            # номер бана по порядку в banned_maps
+            try:
+                ban_n = banned_maps.index(map_name) + 1
+                draw_order(x, y, ban_n)
+            except ValueError:
+                pass
+            draw_thin_x(x, y)
 
     image.save(output_path)
     return output_path
-
 
 def generate_final_match_image(
     selected_map: str,
