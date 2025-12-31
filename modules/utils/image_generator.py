@@ -3,6 +3,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from pathlib import Path
 from functools import lru_cache
 import re
+from io import BytesIO
+from PIL import ImageFilter
 
 
 # Пути к файлам
@@ -661,4 +663,185 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
 
     image.save(output_path)
     return output_path
+
+def _rank_base_text(rank: str) -> str:
+    r = str(rank or "").strip()
+    if not r:
+        return "Unranked"
+    return r.split()[0].capitalize()
+
+
+def generate_profile_card(
+    discord_name: str,
+    riot_username: str,
+    rank: str,
+    wins: int,
+    matches: int,
+    avatar_bytes: bytes | None = None,
+) -> Path:
+    """
+    Генерирует красивую профиль-карту 1280x720:
+    - фон + панели
+    - круглый аватар
+    - иконка ранга (из твоей папки ranks)
+    - статистика
+    """
+    WIDTH, HEIGHT = 1280, 720
+    out_path = Path(__file__).resolve().parents[1] / "pictures" / "profile_card_dynamic.png"
+
+    # ---------- базовый фон ----------
+    img = Image.new("RGBA", (WIDTH, HEIGHT), (10, 10, 12, 255))
+    draw = ImageDraw.Draw(img)
+
+    # градиент
+    top = (14, 14, 18)
+    bot = (7, 7, 10)
+    for y in range(HEIGHT):
+        t = y / (HEIGHT - 1)
+        r = int(top[0] * (1 - t) + bot[0] * t)
+        g = int(top[1] * (1 - t) + bot[1] * t)
+        b = int(top[2] * (1 - t) + bot[2] * t)
+        draw.line([(0, y), (WIDTH, y)], fill=(r, g, b, 255))
+
+    # лёгкий шум
+    try:
+        noise = Image.effect_noise((WIDTH, HEIGHT), 18).convert("L")
+        noise_rgba = Image.merge("RGBA", (noise, noise, noise, noise.point(lambda a: 24)))
+        img = Image.alpha_composite(img, noise_rgba)
+        draw = ImageDraw.Draw(img)
+    except Exception:
+        pass
+
+    # ---------- стиль ----------
+    ACCENT = (255, 170, 60, 255)         # тёплый акцент
+    PANEL_FILL = (0, 0, 0, 120)
+    PANEL_OUT = (255, 255, 255, 35)
+
+    title_font = get_font(86)
+    small_font = get_font(34)
+    value_font = get_font(46)
+    name_font = get_font(64)
+
+    # ---------- заголовок ----------
+    _draw_text(draw, (70, 40), "PROFILE", title_font, fill="white", stroke=4)
+    # тонкая линия под заголовком
+    draw.line([(70, 150), (WIDTH - 70, 150)], fill=(255, 255, 255, 35), width=2)
+
+    # ---------- панели ----------
+    # Левая панель (статы)
+    left_x1, left_y1 = 70, 190
+    left_x2, left_y2 = 430, 630
+    draw.rounded_rectangle((left_x1, left_y1, left_x2, left_y2), radius=26, fill=PANEL_FILL, outline=PANEL_OUT, width=2)
+
+    # Центральная панель (аватар + ник)
+    mid_x1, mid_y1 = 460, 190
+    mid_x2, mid_y2 = 860, 630
+    draw.rounded_rectangle((mid_x1, mid_y1, mid_x2, mid_y2), radius=26, fill=PANEL_FILL, outline=PANEL_OUT, width=2)
+
+    # Правая панель (ранг)
+    right_x1, right_y1 = 890, 190
+    right_x2, right_y2 = 1210, 630
+    draw.rounded_rectangle((right_x1, right_y1, right_x2, right_y2), radius=26, fill=PANEL_FILL, outline=PANEL_OUT, width=2)
+
+    # ---------- расчёты ----------
+    wins = int(wins or 0)
+    matches = int(matches or 0)
+    losses = max(matches - wins, 0)
+    winrate = 0.0 if matches <= 0 else (wins / matches) * 100.0
+
+    # ---------- левая панель: статистика ----------
+    rows = [
+        ("Matches", str(matches)),
+        ("Winrate", (f"{winrate:.1f}".rstrip("0").rstrip(".") + "%") if matches > 0 else "—"),
+        ("Wins", str(wins)),
+        ("Loses", str(losses)),
+    ]
+
+    ry = left_y1 + 26
+    for label, value in rows:
+        # мини-карточка строки
+        draw.rounded_rectangle((left_x1 + 20, ry, left_x2 - 20, ry + 86), radius=18,
+                               fill=(0, 0, 0, 110), outline=(255, 255, 255, 25), width=2)
+        _draw_text(draw, (left_x1 + 40, ry + 20), label, small_font, fill=(220, 220, 220, 255), stroke=2)
+        _draw_text(draw, (left_x2 - 40 - int(draw.textlength(value, font=value_font)), ry + 18),
+                   value, value_font, fill="white", stroke=2)
+        ry += 98
+
+    # ---------- центр: аватар круглый ----------
+    avatar_size = 250
+    cx = (mid_x1 + mid_x2) // 2
+    cy = mid_y1 + 165
+
+    # рамка
+    draw.ellipse((cx - avatar_size//2 - 8, cy - avatar_size//2 - 8, cx + avatar_size//2 + 8, cy + avatar_size//2 + 8),
+                 outline=(255, 255, 255, 55), width=6)
+
+    if avatar_bytes:
+        try:
+            av = Image.open(BytesIO(avatar_bytes)).convert("RGBA").resize((avatar_size, avatar_size), Image.LANCZOS)
+
+            mask = Image.new("L", (avatar_size, avatar_size), 0)
+            mdraw = ImageDraw.Draw(mask)
+            mdraw.ellipse((0, 0, avatar_size, avatar_size), fill=255)
+
+            img.paste(av, (cx - avatar_size//2, cy - avatar_size//2), mask)
+        except Exception:
+            # если аватар сломался — рисуем заглушку
+            draw.ellipse((cx - avatar_size//2, cy - avatar_size//2, cx + avatar_size//2, cy + avatar_size//2),
+                         fill=(0, 0, 0, 160), outline=(255, 255, 255, 35), width=2)
+            _draw_text(draw, (cx - 22, cy - 40), "?", get_font(96), fill="white", stroke=4)
+    else:
+        draw.ellipse((cx - avatar_size//2, cy - avatar_size//2, cx + avatar_size//2, cy + avatar_size//2),
+                     fill=(0, 0, 0, 160), outline=(255, 255, 255, 35), width=2)
+        _draw_text(draw, (cx - 22, cy - 40), "?", get_font(96), fill="white", stroke=4)
+
+    # Ник Discord / Riot
+    dn = (discord_name or "").strip()
+    rn = (riot_username or "—").strip()
+
+    # Discord name
+    dn_w = draw.textlength(dn, font=name_font)
+    _draw_text(draw, (cx - int(dn_w)//2, mid_y2 - 150), dn, name_font, fill="white", stroke=3)
+
+    # Riot username
+    rfont = get_font(40)
+    rn_w = draw.textlength(rn, font=rfont)
+    _draw_text(draw, (cx - int(rn_w)//2, mid_y2 - 86), rn, rfont, fill=(210, 210, 210, 255), stroke=2)
+
+    # ---------- правая панель: ранг ----------
+    rb = _rank_base_text(rank)
+    icon_path = get_icon_path(rb) or _rank_icon_path(rb)
+
+    # слот под иконку
+    icon_size = 170
+    icx = (right_x1 + right_x2) // 2
+    icy = right_y1 + 190
+
+    draw.ellipse((icx - icon_size//2 - 10, icy - icon_size//2 - 10, icx + icon_size//2 + 10, icy + icon_size//2 + 10),
+                 fill=(0, 0, 0, 140), outline=(255, 255, 255, 40), width=4)
+
+    if icon_path and Path(icon_path).exists():
+        try:
+            icon = Image.open(icon_path).convert("RGBA").resize((icon_size, icon_size), Image.LANCZOS)
+            img.paste(icon, (icx - icon_size//2, icy - icon_size//2), icon)
+        except Exception:
+            _draw_text(draw, (icx - 22, icy - 40), "?", get_font(96), fill="white", stroke=4)
+    else:
+        _draw_text(draw, (icx - 22, icy - 40), "?", get_font(96), fill="white", stroke=4)
+
+    # текст ранга
+    rname = rb
+    rname_font = get_font(54)
+    rw = draw.textlength(rname, font=rname_font)
+    _draw_text(draw, (icx - int(rw)//2, right_y2 - 170), rname, rname_font, fill=ACCENT, stroke=3)
+
+    # большое число (например wins) — чтобы панель не пустовала
+    big = str(wins)
+    big_font = get_font(120)
+    bw = draw.textlength(big, font=big_font)
+    _draw_text(draw, (icx - int(bw)//2, right_y2 - 115), big, big_font, fill="white", stroke=4)
+
+    img.save(out_path)
+    return out_path
+
 
