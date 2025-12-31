@@ -289,97 +289,100 @@ def generate_draft_image(
     captain_2_id: int,
     top_ids: list[int] | None = None
 ) -> Path:
-    # Подложка
+    top_ids = top_ids or []
+
     base_path = Path(__file__).resolve().parents[1] / "pictures" / "draft_base.png"
     out_path  = Path(__file__).resolve().parents[1] / "pictures" / "draft_dynamic.png"
     image = Image.open(base_path).convert("RGBA")
     draw  = ImageDraw.Draw(image)
 
     # ===== разметка колонок =====
-    PAD_X     = 80                     # внутренние отступы слева/справа
+    PAD_X     = 80
     CENTER_X  = image.width // 2
-    GAP       = 14                     # между ником и иконкой
-    LINE_H    = 90                     # высота строки
-    RANK_SIZE = 56                     # размер иконки ранга
 
-    # Левая колонка (от PAD_X до CENTER_X - PAD_X)
+    LINE_H    = 92
+    ROW_GAP   = 8
+
+    # слот под иконку (в шаблоне у тебя есть рамки — мы просто ставим иконку аккуратно внутрь)
+    ICON_SLOT_W = 86          # сколько места “отъедаем” справа под рамку/иконку
+    ICON_GUTTER = 18          # дистанция между текстом и иконкой
+    ICON_SIZE   = 48          # сама иконка (меньше рамки — выглядит чище)
+
+    # Левая колонка
     L_LEFT   = PAD_X
     L_RIGHT  = CENTER_X - PAD_X
-    L_TEXT_X = L_LEFT + 16                  # старт текста
-    L_ICON_X = L_RIGHT - RANK_SIZE          # иконка ВСЕГДА справа
+    L_TEXT_X = L_LEFT + 16
+    L_ICON_X = L_RIGHT - ICON_SLOT_W + (ICON_SLOT_W - ICON_SIZE) // 2  # центрируем иконку в слоте
 
-    # Правая колонка (от CENTER_X + PAD_X до image.width - PAD_X)
+    # Правая колонка
     R_LEFT   = CENTER_X + PAD_X
     R_RIGHT  = image.width - PAD_X
-    R_TEXT_X = R_LEFT + 16                  # тоже левое выравнивание
-    R_ICON_X = R_RIGHT - RANK_SIZE
+    R_TEXT_X = R_LEFT + 16
+    R_ICON_X = R_RIGHT - ICON_SLOT_W + (ICON_SLOT_W - ICON_SIZE) // 2
 
-    # Пределы шрифта
-    NICK_START = 54
-    NICK_MIN   = 30
+    # Пределы шрифта (фикс “Sanya на пол-экрана”)
+    NICK_START = 44
+    NICK_MIN   = 24
 
-    # Разбиваем игроков
-    team_1 = [p for p in players if p["team"] == "captain_1"]
-    team_2 = [p for p in players if p["team"] == "captain_2"]
+    team_1 = [p for p in players if p.get("team") == "captain_1"]
+    team_2 = [p for p in players if p.get("team") == "captain_2"]
 
-    def draw_column(team_data, x_text, x_icon, captain_id=None):
-        """Текст слева, иконка справа; шрифт подгоняем под доступную ширину."""
-        total_h = len(team_data) * LINE_H
+    def _text_h(text: str, font) -> int:
+        try:
+            b = draw.textbbox((0, 0), text, font=font)
+            return b[3] - b[1]
+        except Exception:
+            return getattr(font, "size", 30)
+
+    def _ellipsis(text: str, font, max_w: int) -> str:
+        """Если даже на минимальном шрифте не влезает — режем и ставим …"""
+        if draw.textlength(text, font=font) <= max_w:
+            return text
+        ell = "…"
+        t = text
+        while t and draw.textlength(t + ell, font=font) > max_w:
+            t = t[:-1]
+        return (t + ell) if t else ell
+
+    def draw_column(team_data, x_text, x_icon, x_right, captain_id=None):
+        total_h = len(team_data) * (LINE_H + ROW_GAP) - (ROW_GAP if team_data else 0)
         y = (image.height - total_h) // 2 + 40
 
-        name_max_w = (x_icon - GAP) - x_text  # доступная ширина под ник
+        # реальная ширина под ник: до правого края колонки минус слот под иконку
+        name_max_w = (x_right - ICON_SLOT_W - ICON_GUTTER) - x_text
 
         for p in team_data:
-            # одно место формирования имени: nick(name) без дублей
+            # имя всегда через твой форматтер (ник + имя в скобках, без дублей)
             name = _player_label(p)
 
-            # нормализуем ранг для иконки: "Immortal 3" -> "Immortal"
+            # нормализуем ранг под маппинг иконок
             rank = _rank_base(p.get("rank", "Unranked"))
+            icon_path = get_icon_path(rank)
 
-            # цвет ника (топ-3 → золото/серебро/бронза; иначе белый)
             pid = p.get("discord_id") or p.get("id")
             top_color = _color_for_top(pid, top_ids)
             color = top_color or "white"
 
-            # подбираем шрифт под ширину колонки
-            font = _fit_font(draw, name, name_max_w, start=NICK_START, min_size=NICK_MIN)
-
-            # вертикальное центрирование текста внутри строки LINE_H
-            try:
-                bbox = draw.textbbox((0, 0), name, font=font)
-                text_h = bbox[3] - bbox[1]
-            except Exception:
-                text_h = getattr(font, "size", 28)
-
-            text_y = y + (LINE_H - text_h) // 2 - 2
-            _draw_text(draw, (x_text, text_y), name, font=font, fill=color)
-
-            # иконка ранга по центру строки
-            icon_path = get_icon_path(rank)
+            # 1) сначала рисуем иконку (чтобы текст всегда был поверх, если что)
             if icon_path:
                 try:
-                    icon = Image.open(icon_path).convert("RGBA").resize((RANK_SIZE, RANK_SIZE), Image.LANCZOS)
-                    icon_y = y + (LINE_H - RANK_SIZE) // 2
-
-                    # лёгкая подложка под иконку (чтобы читалась на любом фоне)
-                    pad = 6
-                    draw.rounded_rectangle(
-                        (x_icon - pad, icon_y - pad, x_icon + RANK_SIZE + pad, icon_y + RANK_SIZE + pad),
-                        radius=12,
-                        fill=(0, 0, 0, 140),
-                        outline=(255, 255, 255, 28),
-                        width=2
-                    )
-
+                    icon = Image.open(icon_path).convert("RGBA").resize((ICON_SIZE, ICON_SIZE), Image.LANCZOS)
+                    icon_y = y + (LINE_H - ICON_SIZE) // 2
                     image.paste(icon, (x_icon, icon_y), icon)
                 except Exception:
                     pass
 
-            y += LINE_H
+            # 2) шрифт под ширину, но с верхним лимитом, чтобы короткие ники не были огромными
+            font = _fit_font(draw, name, name_max_w, start=NICK_START, min_size=NICK_MIN)
+            name = _ellipsis(name, font, name_max_w)
 
-    # Рисуем обе колонки (оба — левое выравнивание, иконка справа)
-    draw_column(team_1, L_TEXT_X, L_ICON_X, captain_id=captain_1_id)
-    draw_column(team_2, R_TEXT_X, R_ICON_X, captain_id=captain_2_id)
+            text_y = y + (LINE_H - _text_h(name, font)) // 2 - 2
+            _draw_text(draw, (x_text, text_y), name, font=font, fill=color)
+
+            y += (LINE_H + ROW_GAP)
+
+    draw_column(team_1, L_TEXT_X, L_ICON_X, L_RIGHT, captain_id=captain_1_id)
+    draw_column(team_2, R_TEXT_X, R_ICON_X, R_RIGHT, captain_id=captain_2_id)
 
     image.save(out_path)
     return out_path
