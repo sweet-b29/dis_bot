@@ -3,7 +3,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.apps import apps
 
-from core.apps.players.models import Player, PlayerBan, Season, PlayerSeasonStat
+from apps.players.models import Player, PlayerBan, Season, PlayerSeasonStat
 
 
 def get_model(app_labels: list[str], model_name: str):
