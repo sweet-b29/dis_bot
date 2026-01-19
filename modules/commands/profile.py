@@ -5,6 +5,44 @@ from discord import app_commands, Embed
 from modules.utils import api_client
 from modules.utils.image_generator import generate_profile_card
 
+async def send_profile_card(interaction: discord.Interaction, *, edit: bool = False):
+    profile = await api_client.get_player_profile(interaction.user.id)
+    if not profile or "error" in profile:
+        profile = {"username": "—", "rank": "Unranked", "wins": 0, "matches": 0}
+
+    avatar_bytes = None
+    try:
+        avatar_bytes = await interaction.user.display_avatar.read()
+    except Exception:
+        pass
+
+    # ВАЖНО: имя функции генерации — то, что у тебя реально используется сейчас
+    # Если у тебя называется generate_profile_card — оставь как ниже.
+    from modules.utils.image_generator import generate_profile_card
+
+    card_path = generate_profile_card(
+        discord_name=interaction.user.display_name,
+        riot_username=str(profile.get("username") or "—"),
+        rank=str(profile.get("rank") or "Unranked"),
+        wins=int(profile.get("wins") or 0),
+        matches=int(profile.get("matches") or 0),
+        avatar_bytes=avatar_bytes,
+    )
+
+    file = discord.File(card_path, filename="profile.png")
+
+    embed = discord.Embed(
+        title=f"Профиль: {interaction.user.display_name}",
+        color=discord.Color.dark_grey()  # серая лента
+    )
+    embed.set_image(url="attachment://profile.png")
+
+    view = EditProfileButton()
+
+    if edit:
+        await interaction.response.edit_message(embed=embed, attachments=[file], view=view)
+    else:
+        await interaction.response.send_message(embed=embed, file=file, view=view, ephemeral=True)
 
 def _rank_base(rank: str) -> str:
     r = str(rank or "").strip()
@@ -52,6 +90,7 @@ class Profile(commands.Cog):
 
     @app_commands.command(name="profile", description="Показать свой профиль")
     async def profile(self, interaction: discord.Interaction):
+        await send_profile_card(interaction, edit=False)
         profile = await api_client.get_player_profile(interaction.user.id)
 
         # если профиля нет — показываем пустой, но красивый, и даём кнопку редактирования

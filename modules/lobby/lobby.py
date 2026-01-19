@@ -299,22 +299,34 @@ class Lobby:
                 "Iron": 2, "Unranked": 1
             }
 
+            def rank_base(rank: str) -> str:
+                # "Immortal 2" -> "Immortal"
+                return str(rank or "Unranked").strip().split()[0].title()
+
             async with asyncio.TaskGroup() as tg:
                 tasks = {m: tg.create_task(profiles_cache.get(m.id)) for m in self.members}
+
             player_profiles = []
             for member, task in tasks.items():
                 profile = task.result() or {}
-                rank_raw = str(profile.get("rank", "Unranked"))
-                rank = rank_raw.split()[0].capitalize()
-                player_profiles.append((member, rank))
-            # Сортируем по убыванию ранга
-            sorted_players = sorted(
-                player_profiles,
-                key=lambda x: RANK_ORDER.get(x[1], 0),
-                reverse=True
-            )
+                base = rank_base(profile.get("rank", "Unranked"))
+                score = RANK_ORDER.get(base, 1)
+                player_profiles.append((member, score))
 
-            self.captains = [sorted_players[0][0], sorted_players[1][0]]
+            # сортируем по силе
+            sorted_players = sorted(player_profiles, key=lambda x: x[1], reverse=True)
+
+            # пул капитанов = топ-4 (или меньше, если игроков меньше)
+            pool_size = min(4, len(sorted_players))
+            captain_pool = [m for m, _ in sorted_players[:pool_size]]
+
+            # выбираем 2 капитана рандомно из пула
+            self.captains = random.sample(captain_pool, 2)
+
+            # кто выбирает первым — тоже рандом
+            random.shuffle(self.captains)
+
+            # остальные участники
             self.members = [m for m, _ in player_profiles if m not in self.captains]
 
             overwrites = {
@@ -435,25 +447,8 @@ class ProfileButton(discord.ui.Button):
         super().__init__(label="👤 Профиль", style=discord.ButtonStyle.secondary)
 
     async def callback(self, interaction: discord.Interaction):
-        try:
-            profile = await api_client.get_player_profile(interaction.user.id)
-            if not profile:
-                await interaction.response.send_message("❌ Профиль не найден.", ephemeral=True)
-                return
-
-            embed = discord.Embed(
-                title=f"👤 Профиль: {interaction.user.display_name}",
-                color=discord.Color.green()
-            )
-            embed.add_field(name="Ник", value=profile.get("username", "–"), inline=True)
-            embed.add_field(name="Ранг", value=profile.get("rank", "–"), inline=True)
-            embed.add_field(name="Победы", value=profile.get("wins", 0), inline=True)
-            embed.add_field(name="Матчи", value=profile.get("matches", 0), inline=True)
-
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-        except Exception as e:
-            logger.error(f"Ошибка при отображении профиля: {e}")
-            await interaction.response.send_message("❌ Не удалось загрузить профиль.", ephemeral=True)
+        from modules.commands.profile import send_profile_card
+        await send_profile_card(interaction, edit=False)
 
 
 class PlayerProfileModal(discord.ui.Modal, title="Введите данные профиля"):
@@ -464,7 +459,7 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
     )
     rank = discord.ui.TextInput(
         label="Ваш актуальный ранг",
-        placeholder="Например: Immortal",
+        placeholder="Например: Gold 2 / Immortal 1 / Radiant",
         max_length=32
     )
 
@@ -473,27 +468,54 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
         self.lobby = lobby
         self.interaction = interaction
 
+    def _normalize_rank(self, raw: str) -> str:
+        raw = (raw or "").strip()
+        if not raw:
+            return "Unranked"
+
+        # допускаем форматы: "Gold", "Gold 1", "gold1"
+        raw = raw.replace("_", " ").replace("-", " ")
+        raw = raw.strip()
+
+        import re
+        m = re.match(r"^([A-Za-z]+)\s*([1-3])?$", raw, re.IGNORECASE)
+        if not m:
+            raise ValueError("bad format")
+
+        base = m.group(1).title()
+        tier = m.group(2)
+
+        bases = {
+            "Iron", "Bronze", "Silver", "Gold",
+            "Platinum", "Diamond", "Ascendant", "Immortal",
+            "Radiant", "Unranked",
+        }
+        if base not in bases:
+            raise ValueError("unknown rank")
+
+        # Radiant/Unranked без дивизионов
+        if base in {"Radiant", "Unranked"}:
+            return base
+
+        return f"{base} {tier}" if tier else base
+
     async def on_submit(self, interaction: discord.Interaction):
         username = self.username.value.strip()
-        rank = self.rank.value.strip().capitalize()
+        raw_rank = self.rank.value.strip()
+
         lobby = self.lobby if hasattr(self.lobby, "members") else None
-
-        valid_ranks = [
-            "Iron", "Bronze", "Silver", "Gold",
-            "Platinum", "Diamond", "Ascendant", "Immortal", "Radiant",
-            "Unranked"
-        ]
-
-        if rank not in valid_ranks:
-            await interaction.response.send_message(
-                "❌ Неверный ранг. Пожалуйста, введите правильный ранг из списка:\n"
-                "Iron, Bronze, Silver, Gold, Platinum, Diamond, Ascendant, Immortal, Radiant, Unranked",
-                ephemeral=True
-            )
-            return
 
         if lobby and len(lobby.members) >= lobby.max_players:
             await interaction.response.send_message("❌ Лобби уже заполнено.", ephemeral=True)
+            return
+
+        try:
+            rank = self._normalize_rank(raw_rank)
+        except Exception:
+            await interaction.response.send_message(
+                "❌ Неверный ранг.\nПримеры: `Gold`, `Gold 2`, `Immortal 1`, `Radiant`, `Unranked`",
+                ephemeral=True
+            )
             return
 
         try:
@@ -501,15 +523,11 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
                 interaction.user.id, username, rank, create_if_not_exist=True
             )
         except Exception as e:
-            await interaction.response.send_message(
-                f"❌ Ошибка при сохранении профиля: {e}", ephemeral=True
-            )
+            await interaction.response.send_message(f"❌ Ошибка при сохранении профиля: {e}", ephemeral=True)
             return
 
         if isinstance(response, dict) and "error" in response:
-            await interaction.response.send_message(
-                f"❌ {response['error']}", ephemeral=True
-            )
+            await interaction.response.send_message(f"❌ {response['error']}", ephemeral=True)
             return
 
         await interaction.response.send_message(
@@ -521,9 +539,8 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
             try:
                 await lobby.add_member(interaction)
             except Exception as e:
-                await interaction.followup.send(
-                    f"⚠ Ошибка при добавлении в лобби: {e}", ephemeral=True
-                )
+                await interaction.followup.send(f"⚠ Ошибка при добавлении в лобби: {e}", ephemeral=True)
+
 
 
 class WinButtonView(discord.ui.View):

@@ -408,7 +408,7 @@ def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], cu
     draw.text((PADDING, TITLE_Y), f"Бан карт — Ход: {current_captain}", font=title_font, fill="white")
 
     # порядок/набор карт: оставляем фиксированный, чтобы сетка была всегда одинаковая
-    all_maps = ["Ascent","Bind","Haven","Split","Icebox","Breeze","Fracture","Lotus","Sunset","Abyss","Pearl"]
+    all_maps = ["Ascent","Bind","Haven","Split","Icebox","Breeze","Fracture","Lotus","Sunset","Abyss","Pearl", "Corrode"]
 
     name_font = get_font(28)
     badge_font = get_font(22)
@@ -813,17 +813,23 @@ def generate_profile_card(
     icon_path = get_icon_path(rb) or _rank_icon_path(rb)
 
     # слот под иконку
-    icon_size = 170
+    icon_size = 110
     icx = (right_x1 + right_x2) // 2
-    icy = right_y1 + 190
+    icy = right_y1 + 175
 
-    draw.ellipse((icx - icon_size//2 - 10, icy - icon_size//2 - 10, icx + icon_size//2 + 10, icy + icon_size//2 + 10),
-                 fill=(0, 0, 0, 140), outline=(255, 255, 255, 40), width=4)
+    RING = 8  # толщина "ободка"
+    draw.ellipse(
+        (icx - icon_size // 2 - RING, icy - icon_size // 2 - RING,
+         icx + icon_size // 2 + RING, icy + icon_size // 2 + RING),
+        fill=(0, 0, 0, 130),
+        outline=(255, 255, 255, 40),
+        width=4
+    )
 
     if icon_path and Path(icon_path).exists():
         try:
             icon = Image.open(icon_path).convert("RGBA").resize((icon_size, icon_size), Image.LANCZOS)
-            img.paste(icon, (icx - icon_size//2, icy - icon_size//2), icon)
+            img.paste(icon, (icx - icon_size // 2, icy - icon_size // 2), icon)
         except Exception:
             _draw_text(draw, (icx - 22, icy - 40), "?", get_font(96), fill="white", stroke=4)
     else:

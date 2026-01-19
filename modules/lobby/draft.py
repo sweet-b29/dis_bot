@@ -26,7 +26,7 @@ class Draft:
         self.draft_message = None
         self.available_maps = [
             "Ascent", "Bind", "Haven", "Split", "Icebox",
-            "Breeze", "Fracture", "Lotus", "Sunset", "Abyss", "Pearl"
+            "Breeze", "Fracture", "Lotus", "Sunset", "Abyss", "Pearl", "Corrode"
         ]
         self.selected_map = None
         self.banned_maps = []

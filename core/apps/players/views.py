@@ -142,8 +142,24 @@ class PlayerViewSet(viewsets.ModelViewSet):
         permission_classes=[IsAdminUser],
     )
     def reset_stats(self, request):
-        updated = Player.objects.update(wins=0, matches=0)
+        updated = Player.objects.update(
+            wins=0,
+            matches=0,
+            rank="Unranked",
+            last_name_change=None
+        )
         return Response({"ok": True, "updated": updated})
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="wipe_players",
+        authentication_classes=[TokenAuthentication],
+        permission_classes=[IsAdminUser],
+    )
+    def wipe_players(self, request):
+        deleted, _ = Player.objects.all().delete()
+        return Response({"ok": True, "deleted": deleted})
 
 
 class PlayerBanViewSet(viewsets.ModelViewSet):
