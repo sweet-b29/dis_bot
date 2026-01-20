@@ -98,24 +98,31 @@ def get_font(size: int):
 
 # Сопоставление "Immortal" → "Immortal_3_Rank.png"
 def get_icon_path(rank: str):
-    rank_map = {
-        "Iron": "Iron_3_Rank.png",
-        "Bronze": "Bronze_3_Rank.png",
-        "Silver": "Silver_3_Rank.png",
-        "Gold": "Gold_3_Rank.png",
-        "Platinum": "Platinum_3_Rank.png",
-        "Diamond": "Diamond_3_Rank.png",
-        "Ascendant": "Ascendant_3_Rank.png",
-        "Immortal": "Immortal_3_Rank.png",
-        "Radiant": "Radiant_Rank.png",
-        "Unranked": None
-    }
-
-    filename = rank_map.get(rank)
-    if not filename:
+    """
+    Принимает:
+      - "Immortal 1/2/3", "Ascendant 1/2/3", ...
+      - или просто "Immortal" (тогда по умолчанию берём 3)
+    Возвращает Path к файлу иконки либо None.
+    """
+    raw = (rank or "Unranked").strip()
+    if not raw:
         return None
+
+    parts = raw.replace("_", " ").replace("-", " ").split()
+    base = parts[0].capitalize() if parts else "Unranked"
+    tier = parts[1] if len(parts) > 1 and parts[1] in ("1", "2", "3") else None
+
+    if base == "Unranked":
+        return None
+
+    if base == "Radiant":
+        filename = "Radiant_Rank.png"
+    else:
+        filename = f"{base}_{tier or '3'}_Rank.png"
+
     path = RANK_ICONS_PATH / filename
     return path if path.exists() else None
+
 
 def _fit_font(draw: ImageDraw.ImageDraw, text: str, max_px: int, start: int, min_size: int = 28):
     """Подбирает размер шрифта так, чтобы текст влезал по ширине max_px."""
@@ -241,8 +248,8 @@ def generate_lobby_image(players: list[dict], top_ids: list[int] | None = None) 
         display_name = str(p.get("display_name") or "").strip()
         label = format_username(p.get("username"), display_name)
 
-        rank = _rank_base(p.get("rank") or "Unranked")
-        icon_path = get_icon_path(rank) or _rank_icon_path(rank)
+        rank_raw = str(p.get("rank") or "Unranked").strip()
+        icon_path = get_icon_path(rank_raw) or _rank_icon_path(_rank_base(rank_raw))
 
         pid = p.get("discord_id") or p.get("id")
         name_color = _color_for_top(pid, top_ids) or "white"
@@ -358,8 +365,8 @@ def generate_draft_image(
             name = _player_label(p)
 
             # нормализуем ранг под маппинг иконок
-            rank = _rank_base(p.get("rank", "Unranked"))
-            icon_path = get_icon_path(rank)
+            rank_raw = str(p.get("rank") or "Unranked").strip()
+            icon_path = get_icon_path(rank_raw)
 
             pid = p.get("discord_id") or p.get("id")
             top_color = _color_for_top(pid, top_ids)
@@ -624,7 +631,7 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
         display_name = str(player.get("display_name") or "").strip()
         username = format_username(player.get("username"), display_name)
 
-        rank = _rank_base(player.get("rank") or "Unranked")
+        rank_raw = str(player.get("rank") or "Unranked").strip()
         wins = int(player.get("wins", 0))
         matches = int(player.get("matches", 0))
 
@@ -650,7 +657,7 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
         name_font  = _fit_font(draw, username, name_max_w, start=40, min_size=26)
         _draw_text(draw, (name_x, y + (row_h - _text_h(username, name_font)) // 2 - 2), username, name_font, fill=c, stroke=2)
 
-        icon_path = get_icon_path(rank)
+        icon_path = get_icon_path(rank_raw)
         if icon_path:
             try:
                 icon = Image.open(icon_path).convert("RGBA").resize((icon_size, icon_size), Image.LANCZOS)
@@ -809,8 +816,10 @@ def generate_profile_card(
     _draw_text(draw, (cx - int(rn_w)//2, mid_y2 - 86), rn, rfont, fill=(210, 210, 210, 255), stroke=2)
 
     # ---------- правая панель: ранг ----------
-    rb = _rank_base_text(rank)
-    icon_path = get_icon_path(rb) or _rank_icon_path(rb)
+    rank_raw = str(rank or "Unranked").strip()
+    rb = _rank_base_text(rank_raw)
+
+    icon_path = get_icon_path(rank_raw) or _rank_icon_path(rb)
 
     # слот под иконку
     icon_size = 110
@@ -836,7 +845,7 @@ def generate_profile_card(
         _draw_text(draw, (icx - 22, icy - 40), "?", get_font(96), fill="white", stroke=4)
 
     # текст ранга
-    rname = rb
+    rname = rank_raw if rank_raw else rb
     rname_font = get_font(54)
     rw = draw.textlength(rname, font=rname_font)
     _draw_text(draw, (icx - int(rw)//2, right_y2 - 170), rname, rname_font, fill=ACCENT, stroke=3)
