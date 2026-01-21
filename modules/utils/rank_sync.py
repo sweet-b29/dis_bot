@@ -10,6 +10,15 @@ from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError  #
 
 RANK_TTL_SECONDS = int(os.getenv("VALORANT_RANK_TTL_SECONDS", "21600"))  # 6 часов по умолчанию
 
+def riot_id_is_valid(value: str | None) -> bool:
+    if not value:
+        return False
+    s = value.strip()
+    if "#" not in s:
+        return False
+    name, tag = s.split("#", 1)
+    return bool(name.strip()) and bool(tag.strip())
+
 
 def _parse_iso_dt(value: str | None) -> datetime | None:
     if not value:
