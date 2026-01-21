@@ -10,6 +10,7 @@ from discord import File
 from modules.utils.api_client import ensure_api_config
 import aiohttp
 from modules.utils import api_client
+from modules.utils import valorant_api
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
@@ -76,6 +77,10 @@ async def setup_hook():
     timeout = aiohttp.ClientTimeout(total=10, connect=5, sock_read=10)
     bot.http_session = aiohttp.ClientSession(timeout=timeout)
     api_client.set_http_session(bot.http_session)
+
+    api_client.set_http_session(bot.http_session)
+    valorant_api.set_http_session(bot.http_session)
+
     _original_close = bot.close
 
     async def _close_with_http():

@@ -5,8 +5,10 @@ from discord import app_commands, Embed
 from modules.utils import api_client
 from modules.utils.image_generator import generate_profile_card
 
+from modules.utils.rank_sync import ensure_fresh_rank
+
 async def send_profile_card(interaction: discord.Interaction, *, edit: bool = False):
-    profile = await api_client.get_player_profile(interaction.user.id)
+    profile = await ensure_fresh_rank(interaction.user.id)
     if not profile or "error" in profile:
         profile = {"username": "—", "rank": "Unranked", "wins": 0, "matches": 0}
 
@@ -91,7 +93,7 @@ class Profile(commands.Cog):
     @app_commands.command(name="profile", description="Показать свой профиль")
     async def profile(self, interaction: discord.Interaction):
         await send_profile_card(interaction, edit=False)
-        profile = await api_client.get_player_profile(interaction.user.id)
+        profile = await ensure_fresh_rank(interaction.user.id)
 
         # если профиля нет — показываем пустой, но красивый, и даём кнопку редактирования
         if not profile or "error" in profile:
@@ -145,7 +147,7 @@ class ProfileView(discord.ui.View):
             await interaction.response.send_message("❌ Это не ваш профиль.", ephemeral=True)
             return
 
-        profile = await api_client.get_player_profile(interaction.user.id)
+        profile = await ensure_fresh_rank(interaction.user.id)
         if not profile or "error" in profile:
             profile = {"username": "—", "rank": "Unranked", "wins": 0, "matches": 0}
 

@@ -98,6 +98,7 @@ class PlayerViewSet(viewsets.ModelViewSet):
                     discord_id=discord_id,
                     username=str(username).strip(),
                     rank=(str(rank).strip() if rank else (Player._meta.get_field("rank").default or "Unranked")),
+                    rank_last_sync=timezone.now() if rank else None,
                 )
                 created = True
             else:
@@ -120,6 +121,9 @@ class PlayerViewSet(viewsets.ModelViewSet):
             if not (1 <= len(rank) <= 50):
                 return Response({"error": "rank must be 1..50 chars"}, status=400)
             player.rank = rank
+
+            if hasattr(player, "rank_last_sync"):
+                player.rank_last_sync = timezone.now()
 
         try:
             player.save()
@@ -146,7 +150,8 @@ class PlayerViewSet(viewsets.ModelViewSet):
             wins=0,
             matches=0,
             rank="Unranked",
-            last_name_change=None
+            last_name_change=None,
+            rank_last_sync=None,
         )
         return Response({"ok": True, "updated": updated})
 

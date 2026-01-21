@@ -4,7 +4,7 @@ from .models import Player, PlayerBan
 class PlayerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Player
-        fields = ['id', 'discord_id', 'username', 'rank', 'wins', 'matches']
+        fields = ['id', 'discord_id', 'username', 'rank', 'rank_last_sync', 'wins', 'matches']
 
 class PlayerBanSerializer(serializers.ModelSerializer):
     banned_by = serializers.PrimaryKeyRelatedField(read_only=True)

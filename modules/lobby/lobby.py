@@ -10,6 +10,11 @@ import os
 from modules.utils.image_generator import generate_lobby_image
 from modules.utils.api_client import is_banned, get_leaderboard_top
 from modules.utils.utils import create_discord_file, render_ban_message
+from modules.utils.rank_sync import riot_id_is_valid
+from modules.utils import api_client
+from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
+
+from modules.utils.rank_sync import ensure_fresh_rank
 
 LOBBY_COUNTERS = {
     "2x2": 0,
@@ -31,7 +36,7 @@ class ProfilesCache:
             if now - ts < self.ttl:
                 return data
         # вне локов — сетевой запрос
-        data = await api_client.get_player_profile(discord_id)
+        data = await ensure_fresh_rank(discord_id)
         async with self._lock:
             self._store[discord_id] = (now, data)
         return data
@@ -45,21 +50,24 @@ class JoinLobbyButton(View):
 
     @discord.ui.button(label="Присоединиться к лобби", style=discord.ButtonStyle.success)
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        profile = await api_client.get_player_profile(interaction.user.id)
+        profile = await profiles_cache.get(interaction.user.id)
+
+        # профиля нет — регаем
         if not profile or not profile.get("id"):
-            # Профиля нет (или сеть отвалилась) — спокойно открываем модалку
             await interaction.response.send_modal(PlayerProfileModal(interaction, lobby=self.lobby))
             return
 
-        if not profile or not profile.get("username") or not profile.get("rank"):
-            try:
-                modal = PlayerProfileModal(interaction, lobby=self.lobby)
-                await interaction.response.send_modal(modal)
-            except Exception as e:
-                logger.exception(f"❌ Не удалось отправить модалку регистрации: {e}")
-                await interaction.response.send_message("⚠ Не удалось открыть форму регистрации.", ephemeral=True)
+        # Riot ID кривой (например, без #) — заставляем пере-ввести
+        if not riot_id_is_valid(profile.get("username")):
+            await interaction.response.send_modal(PlayerProfileModal(interaction, lobby=self.lobby))
             return
 
+        # ранг пустой — тоже пере-рег (на случай старых записей)
+        if not (profile.get("rank") or "").strip():
+            await interaction.response.send_modal(PlayerProfileModal(interaction, lobby=self.lobby))
+            return
+
+        # дальше оставляй твою текущую логику defer/ban/add_member без изменений
         try:
             await interaction.response.defer(ephemeral=True)
         except discord.InteractionResponded:
@@ -451,16 +459,12 @@ class ProfileButton(discord.ui.Button):
         await send_profile_card(interaction, edit=False)
 
 
-class PlayerProfileModal(discord.ui.Modal, title="Введите данные профиля"):
+class PlayerProfileModal(discord.ui.Modal, title="Введите Riot ID (Name#TAG)"):
     username = discord.ui.TextInput(
-        label="Ваш ник в игре",
+        label="Riot ID",
         placeholder="Например: sweet#b29",
-        max_length=32
-    )
-    rank = discord.ui.TextInput(
-        label="Ваш актуальный ранг",
-        placeholder="Например: Gold 2 / Immortal 1 / Radiant",
-        max_length=32
+        max_length=32,
+        required=True,
     )
 
     def __init__(self, interaction: discord.Interaction, *, lobby: "Lobby|None" = None):
@@ -468,79 +472,61 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите данные п
         self.lobby = lobby
         self.interaction = interaction
 
-    def _normalize_rank(self, raw: str) -> str:
-        raw = (raw or "").strip()
-        if not raw:
-            return "Unranked"
-
-        # допускаем форматы: "Gold", "Gold 1", "gold1"
-        raw = raw.replace("_", " ").replace("-", " ")
-        raw = raw.strip()
-
-        import re
-        m = re.match(r"^([A-Za-z]+)\s*([1-3])?$", raw, re.IGNORECASE)
-        if not m:
-            raise ValueError("bad format")
-
-        base = m.group(1).title()
-        tier = m.group(2)
-
-        bases = {
-            "Iron", "Bronze", "Silver", "Gold",
-            "Platinum", "Diamond", "Ascendant", "Immortal",
-            "Radiant", "Unranked",
-        }
-        if base not in bases:
-            raise ValueError("unknown rank")
-
-        # Radiant/Unranked без дивизионов
-        if base in {"Radiant", "Unranked"}:
-            return base
-
-        return f"{base} {tier}" if tier else base
-
     async def on_submit(self, interaction: discord.Interaction):
-        username = self.username.value.strip()
-        raw_rank = self.rank.value.strip()
+        riot_id = (self.username.value or "").strip()
 
-        lobby = self.lobby if hasattr(self.lobby, "members") else None
-
-        if lobby and len(lobby.members) >= lobby.max_players:
-            await interaction.response.send_message("❌ Лобби уже заполнено.", ephemeral=True)
-            return
-
-        try:
-            rank = self._normalize_rank(raw_rank)
-        except Exception:
+        # 1) Жёсткая валидация формата
+        if "#" not in riot_id:
             await interaction.response.send_message(
-                "❌ Неверный ранг.\nПримеры: `Gold`, `Gold 2`, `Immortal 1`, `Radiant`, `Unranked`",
+                "❌ Riot ID должен быть строго в формате `Name#TAG`.\nПример: `sweet#b29`",
                 ephemeral=True
             )
             return
 
-        try:
-            response = await api_client.update_player_profile(
-                interaction.user.id, username, rank, create_if_not_exist=True
+        name, tag = riot_id.split("#", 1)
+        name = name.strip()
+        tag = tag.strip()
+        if not name or not tag:
+            await interaction.response.send_message(
+                "❌ Riot ID должен быть в формате `Name#TAG` (и Name, и TAG обязательны).",
+                ephemeral=True
             )
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Ошибка при сохранении профиля: {e}", ephemeral=True)
             return
 
-        if isinstance(response, dict) and "error" in response:
-            await interaction.response.send_message(f"❌ {response['error']}", ephemeral=True)
+        # Нормализуем, чтобы в БД не было мусора с пробелами
+        riot_id = f"{name}#{tag}"
+
+        # 2) Тянем реальный ранг
+        try:
+            rank, region_used = await fetch_valorant_rank(riot_id)
+        except ValorantRankError as e:
+            await interaction.response.send_message(f"❌ Не удалось получить ранг: {e}", ephemeral=True)
+            return
+
+        # 3) Сохраняем профиль (username + rank). wins/matches не трогаем.
+        try:
+            await api_client.update_player_profile(
+                interaction.user.id,
+                username=riot_id,
+                rank=rank,
+                create_if_not_exist=True
+            )
+        except Exception:
+            await interaction.response.send_message("❌ Ошибка при сохранении профиля.", ephemeral=True)
             return
 
         await interaction.response.send_message(
-            f"✅ Ваш профиль сохранён!\n**Ник:** {username}\n**Ранг:** {rank}",
+            f"✅ Профиль сохранён.\nRiot ID: `{riot_id}`\nРанг: **{rank}** (region: `{region_used}`)",
             ephemeral=True
         )
 
-        if lobby:
+        # 4) Если модалка была при входе в лобби — продолжаем
+        if self.lobby:
             try:
-                await lobby.add_member(interaction)
-            except Exception as e:
-                await interaction.followup.send(f"⚠ Ошибка при добавлении в лобби: {e}", ephemeral=True)
-
+                await self.lobby.add_member(interaction)
+                await interaction.followup.send("✅ Вы присоединились к лобби!", ephemeral=True)
+            except Exception:
+                await interaction.followup.send("⚠ Профиль сохранён, но вход в лобби не удался.", ephemeral=True)
 
 
 class WinButtonView(discord.ui.View):
