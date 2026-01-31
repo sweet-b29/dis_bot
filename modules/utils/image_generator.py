@@ -97,6 +97,48 @@ def get_font(size: int):
         return ImageFont.load_default()
 
 # Сопоставление "Immortal" → "Immortal_3_Rank.png"
+_RANK_ALIASES = {
+    "plat": "Platinum",
+    "platinum": "Platinum",
+    "dia": "Diamond",
+    "diamond": "Diamond",
+    "asc": "Ascendant",
+    "ascendant": "Ascendant",
+    "immo": "Immortal",
+    "immortal": "Immortal",
+    "gold": "Gold",
+    "silver": "Silver",
+    "bronze": "Bronze",
+    "iron": "Iron",
+    "radiant": "Radiant",
+}
+
+_ROMAN_TO_TIER = {"i": "1", "ii": "2", "iii": "3"}
+
+def _parse_rank_icon(rank: str) -> tuple[str | None, str | None]:
+    raw = (rank or "").strip()
+    if not raw:
+        return None, None
+    cleaned = re.sub(r"[^\w\s]", " ", raw)
+    parts = cleaned.replace("_", " ").replace("-", " ").split()
+    if not parts:
+        return None, None
+
+    base_raw = parts[0].lower()
+    base = _RANK_ALIASES.get(base_raw, base_raw.capitalize())
+
+    tier = None
+    for part in parts[1:]:
+        p = part.lower()
+        if p in {"1", "2", "3"}:
+            tier = p
+            break
+        if p in _ROMAN_TO_TIER:
+            tier = _ROMAN_TO_TIER[p]
+            break
+
+    return base, tier
+    
 def get_icon_path(rank: str):
     """
     Принимает:
@@ -104,15 +146,11 @@ def get_icon_path(rank: str):
       - или просто "Immortal" (тогда по умолчанию берём 3)
     Возвращает Path к файлу иконки либо None.
     """
-    raw = (rank or "Unranked").strip()
-    if not raw:
+    base, tier = _parse_rank_icon(rank or "Unranked")
+    if not base:
         return None
 
-    parts = raw.replace("_", " ").replace("-", " ").split()
-    base = parts[0].capitalize() if parts else "Unranked"
-    tier = parts[1] if len(parts) > 1 and parts[1] in ("1", "2", "3") else None
-
-    if base == "Unranked":
+    if base in {"Unranked", "Unrated"}:
         return None
 
     if base == "Radiant":
@@ -858,5 +896,3 @@ def generate_profile_card(
 
     img.save(out_path)
     return out_path
-
-
