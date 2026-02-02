@@ -15,8 +15,13 @@ from pathlib import Path
 from decouple import config
 import os
 
-SECRET_KEY = config('SECRET_KEY')
-DEBUG = config('DEBUG', default=False, cast=bool)
+from decouple import config
+
+# ⚠️ В проде ОБЯЗАТЕЛЬНО задать SECRET_KEY в переменных окружения.
+# Здесь дефолт только для локальной разработки.
+SECRET_KEY = config("SECRET_KEY", default="dev-secret-key-change-me")
+
+DEBUG = config("DEBUG", default=True, cast=bool)
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -175,12 +180,15 @@ AUTHENTICATION_BACKENDS = [
 LOGIN_REDIRECT_URL = "/accounts/"
 LOGOUT_REDIRECT_URL = "/"
 
+DISCORD_CLIENT_ID = config("DISCORD_CLIENT_ID", default="")
+DISCORD_CLIENT_SECRET = config("DISCORD_CLIENT_SECRET", default="")
+
 SOCIALACCOUNT_PROVIDERS = {
     "discord": {
         "APP": {
-            "client_id": config("DISCORD_CLIENT_ID"),
-            "secret": config("DISCORD_CLIENT_SECRET"),
-            "key": ""
+            "client_id": DISCORD_CLIENT_ID,
+            "secret": DISCORD_CLIENT_SECRET,
+            "key": "",
         },
         "SCOPE": ["identify", "email"],
     }
