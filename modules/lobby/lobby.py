@@ -131,7 +131,7 @@ class JoinLobbyButton(View):
                 "discord_id": m.id,
                 "username": profile.get("username", "—"),
                 "display_name": m.display_name,
-                "rank": profile.get("rank", "—"),
+                "rank": (profile.get("rank") or "Unranked"),
                 "wins": profile.get("wins", 0),
                 "matches": profile.get("matches", 0),
             })
@@ -252,7 +252,7 @@ class Lobby:
                 "discord_id": m.id,
                 "username": profile.get("username", "—"),
                 "display_name": m.display_name,
-                "rank": profile.get("rank", "—"),
+                "rank": (profile.get("rank") or "Unranked"),
                 "wins": profile.get("wins", 0),
                 "matches": profile.get("matches", 0),
             })
@@ -354,7 +354,7 @@ class Lobby:
                     "discord_id": m.id,
                     "username": profile.get("username", "—"),
                     "display_name": m.display_name,
-                    "rank": profile.get("rank", "—"),
+                    "rank": (profile.get("rank") or "Unranked"),
                     "wins": profile.get("wins", 0),
                     "matches": profile.get("matches", 0),
                 })
@@ -473,37 +473,38 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите Riot ID (Name#T
         self.interaction = interaction
 
     async def on_submit(self, interaction: discord.Interaction):
-        riot_id = (self.username.value or "").strip()
+        # 1) Сразу подтверждаем interaction (иначе 404 Unknown interaction)
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
-        # 1) Жёсткая валидация формата
-        if "#" not in riot_id:
-            await interaction.response.send_message(
-                "❌ Riot ID должен быть строго в формате `Name#TAG`.\nПример: `sweet#b29`",
+        riot_id = self.username.value.strip()
+
+        # 2) Проверка формата Riot ID
+        if "#" not in riot_id or riot_id.count("#") != 1:
+            await interaction.followup.send(
+                "❌ Riot ID должен быть в формате `Name#TAG` (пример: `sweet#b29`).",
                 ephemeral=True
             )
             return
 
         name, tag = riot_id.split("#", 1)
-        name = name.strip()
-        tag = tag.strip()
         if not name or not tag:
-            await interaction.response.send_message(
-                "❌ Riot ID должен быть в формате `Name#TAG` (и Name, и TAG обязательны).",
+            await interaction.followup.send(
+                "❌ Riot ID должен быть в формате `Name#TAG` (пример: `sweet#b29`).",
                 ephemeral=True
             )
             return
 
-        # Нормализуем, чтобы в БД не было мусора с пробелами
-        riot_id = f"{name}#{tag}"
-
-        # 2) Тянем реальный ранг
+        # 3) Тянем актуальный ранг
         try:
             rank, region_used = await fetch_valorant_rank(riot_id)
         except ValorantRankError as e:
-            await interaction.response.send_message(f"❌ Не удалось получить ранг: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Не удалось получить ранг: {e}", ephemeral=True)
+            return
+        except Exception:
+            await interaction.followup.send("❌ Не удалось получить ранг (внутренняя ошибка).", ephemeral=True)
             return
 
-        # 3) Сохраняем профиль (username + rank). wins/matches не трогаем.
+        # 4) Сохраняем профиль
         try:
             await api_client.update_player_profile(
                 interaction.user.id,
@@ -512,21 +513,31 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите Riot ID (Name#T
                 create_if_not_exist=True
             )
         except Exception:
-            await interaction.response.send_message("❌ Ошибка при сохранении профиля.", ephemeral=True)
+            await interaction.followup.send("❌ Ошибка при сохранении профиля.", ephemeral=True)
             return
 
-        await interaction.response.send_message(
-            f"✅ Профиль сохранён.\nRiot ID: `{riot_id}`\nРанг: **{rank}** (region: `{region_used}`)",
-            ephemeral=True
-        )
-
-        # 4) Если модалка была при входе в лобби — продолжаем
+        # 5) Если модалка открывалась при входе в лобби — сразу добавляем
         if self.lobby:
             try:
                 await self.lobby.add_member(interaction)
-                await interaction.followup.send("✅ Вы присоединились к лобби!", ephemeral=True)
+                await interaction.followup.send(
+                    f"✅ Профиль сохранён и вы добавлены в лобби.\n"
+                    f"Ник: `{riot_id}`\nРанг: **{rank}** (region: `{region_used}`)",
+                    ephemeral=True
+                )
+                return
             except Exception:
-                await interaction.followup.send("⚠ Профиль сохранён, но вход в лобби не удался.", ephemeral=True)
+                await interaction.followup.send(
+                    f"⚠ Профиль сохранён, но вход в лобби не удался.\n"
+                    f"Ник: `{riot_id}`\nРанг: **{rank}** (region: `{region_used}`)",
+                    ephemeral=True
+                )
+                return
+
+        await interaction.followup.send(
+            f"✅ Профиль сохранён.\nНик: `{riot_id}`\nРанг: **{rank}** (region: `{region_used}`)",
+            ephemeral=True
+        )
 
 
 class WinButtonView(discord.ui.View):

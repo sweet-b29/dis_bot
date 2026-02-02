@@ -6,7 +6,7 @@ from django.utils import timezone
 class Player(models.Model):
     discord_id = models.BigIntegerField(unique=True)
     username = models.CharField(max_length=255)
-    rank = models.CharField(max_length=50, default='Unranked')
+    rank = models.CharField(max_length=50, default="Unranked")
     rank_last_sync = models.DateTimeField(null=True, blank=True, db_index=True)
     wins = models.PositiveIntegerField(default=0, db_index=True)
     matches = models.PositiveIntegerField(default=0, db_index=True)

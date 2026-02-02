@@ -121,6 +121,7 @@ class PlayerViewSet(viewsets.ModelViewSet):
             if not (1 <= len(rank) <= 50):
                 return Response({"error": "rank must be 1..50 chars"}, status=400)
             player.rank = rank
+            player.rank_last_sync = timezone.now()
 
             if hasattr(player, "rank_last_sync"):
                 player.rank_last_sync = timezone.now()

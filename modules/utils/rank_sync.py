@@ -1,14 +1,14 @@
-# modules/utils/rank_sync.py
 import os
-from datetime import datetime, timezone
-
+from datetime import datetime, timezone, timedelta
 from loguru import logger
 from modules.utils import api_client
+from typing import Optional
 
 # твоя функция, которая реально достаёт ранг по Name#TAG (HenrikDev или другой источник)
 from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError  # см. ниже
 
-RANK_TTL_SECONDS = int(os.getenv("VALORANT_RANK_TTL_SECONDS", "21600"))  # 6 часов по умолчанию
+RANK_TTL_SECONDS = int(os.getenv("VALORANT_RANK_TTL_SECONDS", "21600"))
+RANK_TTL = timedelta(hours=6) # 6 часов по умолчанию
 
 def riot_id_is_valid(value: str | None) -> bool:
     if not value:
@@ -33,10 +33,9 @@ def _parse_iso_dt(value: str | None) -> datetime | None:
 
 
 def _is_stale(last_sync: datetime | None) -> bool:
-    if last_sync is None:
+    if not last_sync:
         return True
-    now = datetime.now(timezone.utc)
-    return (now - last_sync).total_seconds() > RANK_TTL_SECONDS
+    return datetime.now(timezone.utc) - last_sync > RANK_TTL
 
 
 async def ensure_fresh_rank(discord_id: int, *, force: bool = False) -> dict:
@@ -52,12 +51,12 @@ async def ensure_fresh_rank(discord_id: int, *, force: bool = False) -> dict:
     if not riot_id:
         return profile
 
-    last_sync = _parse_iso_dt(profile.get("rank_last_sync"))
-    if not force and not _is_stale(last_sync):
+    last_sync_dt = _parse_iso_dt(profile.get("rank_last_sync"))
+    if not force and not _is_stale(last_sync_dt):
         return profile
 
     try:
-        new_rank, _region_used = await fetch_valorant_rank(riot_id, force=True)
+        new_rank, _region_used = await fetch_valorant_rank(riot_id, force=force)
     except ValorantRankError as e:
         logger.warning(f"Rank sync failed for {discord_id} ({riot_id}): {e}")
         return profile
