@@ -5,10 +5,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from modules.utils import api_client
-
-from modules.utils.rank_sync import riot_id_is_valid
-from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
+from modules.utils.rank_sync import ensure_fresh_rank
+from modules.utils.valorant_api import ValorantRankError
 from modules.utils import api_client
 import asyncio
 
@@ -82,58 +80,44 @@ class Admin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="syncallranks", description="Принудительно синхронизировать ранги всем игрокам")
-    @admin_only()
+    @app_commands.command(name="syncallranks", description="Синхронизировать ранги всех игроков с Valorant")
     async def syncallranks(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        data = await api_client.get_all_players()
-        rows = data.get("results", data) if isinstance(data, dict) else data
-        if not isinstance(rows, list):
-            await interaction.followup.send("❌ Не удалось получить список игроков из API.", ephemeral=True)
+        players = await api_client.get_players()  # должен возвращать список игроков
+        if not players:
+            await interaction.followup.send("Игроков не найдено.", ephemeral=True)
             return
 
-        updated = failed = skipped = 0
-        sem = asyncio.Semaphore(3)
+        sem = asyncio.Semaphore(2)  # <= 2 параллельно, иначе 429 будет чаще
+        updated = 0
+        skipped = 0
 
-        async def worker(row: dict):
-            nonlocal updated, failed, skipped
-            discord_id = int(row.get("discord_id") or 0)
-            riot_id = str(row.get("username") or "").strip()
-
-            if not discord_id or not riot_id_is_valid(riot_id):
-                skipped += 1
-                return
-
+        async def worker(p):
+            nonlocal updated, skipped
             async with sem:
                 try:
-                    rank, _ = await fetch_valorant_rank(riot_id, force=True)
-                    await api_client.update_player_profile(discord_id, rank=rank, create_if_not_exist=False)
-                    updated += 1
+                    res = await ensure_fresh_rank(int(p["discord_id"]), force=True)
+                    if res:
+                        updated += 1
+                    else:
+                        skipped += 1
                 except ValorantRankError as e:
-                    failed += 1
-                    # если словил 429 — дальше смысла нет
-                    if getattr(e, "status", None) == 429:
+                    # если это 429 — лучше стопать весь процесс
+                    msg = str(e).lower()
+                    if "лимит" in msg or "429" in msg or "rate limit" in msg:
                         raise
-                except Exception:
-                    failed += 1
+                    skipped += 1
                 finally:
-                    await asyncio.sleep(0.25)  # мягкий антиспам
+                    await asyncio.sleep(0.35)  # троттлинг
 
         try:
-            for row in rows:
-                await worker(row)
-        except Exception:
-            await interaction.followup.send("⚠ Дошли до лимита/ошибки. Повтори позже.", ephemeral=True)
+            await asyncio.gather(*(worker(p) for p in players))
+        except ValorantRankError:
+            await interaction.followup.send("⚠️ Дошли до лимита HenrikDev (429). Повтори позже.", ephemeral=True)
             return
 
-        await interaction.followup.send(
-            f"✅ Синхронизация завершена.\n"
-            f"Обновлено: {updated}\n"
-            f"Пропущено: {skipped}\n"
-            f"Ошибок: {failed}",
-            ephemeral=True
-        )
+        await interaction.followup.send(f"✅ Синк завершён. Обновлено: {updated}, пропущено: {skipped}", ephemeral=True)
 
     @app_commands.command(name="changerank", description="Изменить ранг игрока (без изменения ника)")
     @app_commands.describe(user="Участник", rank="Ранг (например: Immortal 2)")

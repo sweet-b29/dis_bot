@@ -62,6 +62,14 @@ async def on_voice_state_update(member, before, after):
 
 @bot.event
 async def setup_hook():
+    GUILD_ID = int(os.getenv("GUILD_ID"))
+
+    class MyBot(commands.Bot):
+        async def setup_hook(self):
+            guild = discord.Object(id=GUILD_ID)
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+
     # Загрузка всех команд из modules/commands/*
     base_dir = Path(__file__).resolve().parents[2]
     commands_dir = base_dir / "modules" / "commands"

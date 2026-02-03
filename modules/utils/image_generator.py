@@ -888,9 +888,14 @@ def generate_profile_card(
     rw = draw.textlength(rname, font=rname_font)
     _draw_text(draw, (icx - int(rw)//2, right_y2 - 170), rname, rname_font, fill=ACCENT, stroke=3)
 
-    # большое число (например wins) — чтобы панель не пустовала
+    label_font = get_font(34)
+    value_font_big = get_font(88)
+
+    _draw_text(draw, (right_x1 + 40, right_y2 - 135), "Wins", label_font, fill=(220, 220, 220, 255), stroke=2)
+
     big = str(wins)
-    big_font = get_font(120)
+    bw = draw.textlength(big, font=value_font_big)
+    _draw_text(draw, (icx - int(bw) // 2, right_y2 - 125), big, value_font_big, fill="white", stroke=4)
     bw = draw.textlength(big, font=big_font)
     _draw_text(draw, (icx - int(bw)//2, right_y2 - 115), big, big_font, fill="white", stroke=4)
 
