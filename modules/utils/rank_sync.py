@@ -8,7 +8,7 @@ from typing import Optional
 from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError  # см. ниже
 
 RANK_TTL_SECONDS = int(os.getenv("VALORANT_RANK_TTL_SECONDS", "21600"))
-RANK_TTL = timedelta(hours=6) # 6 часов по умолчанию
+RANK_TTL = timedelta(seconds=RANK_TTL_SECONDS)
 
 def riot_id_is_valid(value: str | None) -> bool:
     if not value:
@@ -65,6 +65,7 @@ async def ensure_fresh_rank(discord_id: int, *, force: bool = False) -> dict:
         return profile
 
     try:
+        # ВАЖНО: сохраняем даже если ранг не изменился, чтобы обновить rank_last_sync
         await api_client.update_player_profile(discord_id=discord_id, username=None, rank=new_rank, create_if_not_exist=False)
     except Exception as e:
         logger.warning(f"Failed to save rank to Django for {discord_id}: {e}")

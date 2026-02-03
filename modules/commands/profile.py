@@ -39,12 +39,19 @@ async def send_profile_card(interaction: discord.Interaction, *, edit: bool = Fa
     )
     embed.set_image(url="attachment://profile.png")
 
-    view = EditProfileButton()
+    view = ProfileView(owner_id=interaction.user.id)
 
+    # безопасно: если interaction уже отвечен — используем followup/edit_original_response
     if edit:
-        await interaction.response.edit_message(embed=embed, attachments=[file], view=view)
+        if interaction.response.is_done():
+            await interaction.edit_original_response(embed=embed, attachments=[file], view=view)
+        else:
+            await interaction.response.edit_message(embed=embed, attachments=[file], view=view)
     else:
-        await interaction.response.send_message(embed=embed, file=file, view=view, ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, file=file, view=view, ephemeral=True)
 
 def _rank_base(rank: str) -> str:
     r = str(rank or "").strip()
@@ -93,35 +100,7 @@ class Profile(commands.Cog):
     @app_commands.command(name="profile", description="Показать свой профиль")
     async def profile(self, interaction: discord.Interaction):
         await send_profile_card(interaction, edit=False)
-        profile = await ensure_fresh_rank(interaction.user.id)
-
-        # если профиля нет — показываем пустой, но красивый, и даём кнопку редактирования
-        if not profile or "error" in profile:
-            profile = {"username": "—", "rank": "Unranked", "wins": 0, "matches": 0}
-
-        avatar_bytes = None
-        try:
-            avatar_bytes = await interaction.user.display_avatar.read()
-        except Exception:
-            pass
-
-        card_path = generate_profile_card(
-            discord_name=interaction.user.display_name,
-            riot_username=str(profile.get("username") or "—"),
-            rank=str(profile.get("rank") or "Unranked"),
-            wins=int(profile.get("wins") or 0),
-            matches=int(profile.get("matches") or 0),
-            avatar_bytes=avatar_bytes,
-        )
-
-        file = discord.File(card_path, filename="profile.png")
-
-        rb = _rank_base(str(profile.get("rank") or "Unranked"))
-        embed = Embed(title=f"Профиль: {interaction.user.display_name}", color=_rank_color(rb))
-        embed.set_image(url="attachment://profile.png")
-
-        view = ProfileView(owner_id=interaction.user.id)
-        await interaction.response.send_message(embed=embed, file=file, view=view, ephemeral=True)
+        return
 
 
 class ProfileView(discord.ui.View):
