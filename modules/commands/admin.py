@@ -89,7 +89,7 @@ class Admin(commands.Cog):
             await interaction.followup.send("Игроков не найдено.", ephemeral=True)
             return
 
-        sem = asyncio.Semaphore(2)  # <= 2 параллельно, иначе 429 будет чаще
+        sem = asyncio.Semaphore(1)
         updated = 0
         skipped = 0
 
@@ -97,7 +97,7 @@ class Admin(commands.Cog):
             nonlocal updated, skipped
             async with sem:
                 try:
-                    res = await ensure_fresh_rank(int(p["discord_id"]), force=True)
+                    res = await ensure_fresh_rank(int(p["discord_id"]), force=False)
                     if res:
                         updated += 1
                     else:
@@ -109,7 +109,7 @@ class Admin(commands.Cog):
                         raise
                     skipped += 1
                 finally:
-                    await asyncio.sleep(0.35)  # троттлинг
+                    await asyncio.sleep(1.2)  # троттлинг
 
         try:
             await asyncio.gather(*(worker(p) for p in players))

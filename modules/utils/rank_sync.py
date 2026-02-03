@@ -1,26 +1,16 @@
 from __future__ import annotations
-
 import os
 from datetime import datetime, timedelta, timezone
 from loguru import logger
-
 from modules.utils import api_client
 from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
-
 import re
 
-_RIOT_ID_RE = re.compile(r"^[^#]{3,16}#[A-Za-z0-9]{3,5}$")
+_RIOT_ID_RE = re.compile(r"^.{3,16}#[0-9A-Za-z]{3,5}$")
 
-def riot_id_is_valid(riot_id: str | None) -> bool:
-    """
-    Валидатор Riot ID формата Name#TAG.
-    - Name: 3..16 символов (любой текст кроме '#', включая пробелы)
-    - TAG: 3..5 символов (латиница/цифры)
-    """
-    if not riot_id:
-        return False
-    s = riot_id.strip()
-    return bool(_RIOT_ID_RE.match(s))
+def riot_id_is_valid(riot_id: str) -> bool:
+    riot_id = (riot_id or "").strip()
+    return bool(_RIOT_ID_RE.match(riot_id))
 
 RANK_TTL = timedelta(seconds=int(os.getenv("RANK_TTL_SECONDS", "21600")))  # 6 часов по умолчанию
 

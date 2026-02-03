@@ -1,165 +1,90 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
-from discord import app_commands, Embed
 
 from modules.utils import api_client
-from modules.utils.image_generator import generate_profile_card
-
 from modules.utils.rank_sync import ensure_fresh_rank
+from modules.utils.image_generator import generate_profile_card
+from modules.utils.valorant_api import ValorantRankError
+
 
 async def send_profile_card(interaction: discord.Interaction, *, edit: bool = False):
-    profile = await ensure_fresh_rank(interaction.user.id)
-    if not profile or "error" in profile:
-        profile = {"username": "—", "rank": "Unranked", "wins": 0, "matches": 0}
+    """
+    edit=False  -> отправляет новое сообщение
+    edit=True   -> редактирует текущее (для кнопки "Обновить")
+    """
+    discord_id = interaction.user.id
 
-    avatar_bytes = None
+    # 1) Получаем профиль (и пытаемся подтянуть ранг)
     try:
-        avatar_bytes = await interaction.user.display_avatar.read()
-    except Exception:
-        pass
+        profile = await ensure_fresh_rank(discord_id, force=False)
+    except ValorantRankError:
+        # если HenrikDev в лимите — просто показываем то, что уже есть в БД
+        profile = await api_client.get_player(discord_id)
 
-    # ВАЖНО: имя функции генерации — то, что у тебя реально используется сейчас
-    # Если у тебя называется generate_profile_card — оставь как ниже.
-    from modules.utils.image_generator import generate_profile_card
+    if not profile:
+        profile = {"username": None, "rank": "Unranked", "wins": 0}
 
-    card_path = generate_profile_card(
-        discord_name=interaction.user.display_name,
-        riot_username=str(profile.get("username") or "—"),
-        rank=str(profile.get("rank") or "Unranked"),
-        wins=int(profile.get("wins") or 0),
-        matches=int(profile.get("matches") or 0),
+    username = profile.get("username") or "Не указан"
+    rank = profile.get("rank") or "Unranked"
+    wins = int(profile.get("wins") or 0)
+
+    # 2) Аватар
+    avatar_bytes = await interaction.user.display_avatar.read()
+
+    # 3) Генерация картинки
+    out_path = generate_profile_card(
+        discord_id=discord_id,
+        username=username,
+        wins=wins,
+        rank=rank,
         avatar_bytes=avatar_bytes,
     )
 
-    file = discord.File(card_path, filename="profile.png")
-
-    embed = discord.Embed(
-        title=f"Профиль: {interaction.user.display_name}",
-        color=discord.Color.dark_grey()  # серая лента
-    )
+    file = discord.File(out_path, filename="profile.png")
+    embed = discord.Embed(title="Профиль игрока")
     embed.set_image(url="attachment://profile.png")
 
-    view = ProfileView(owner_id=interaction.user.id)
+    view = ProfileView(discord_id=discord_id)
 
-    # безопасно: если interaction уже отвечен — используем followup/edit_original_response
+    # 4) Ответ interaction (аккуратно: response может быть уже использован)
     if edit:
         if interaction.response.is_done():
-            await interaction.edit_original_response(embed=embed, attachments=[file], view=view)
+            await interaction.edit_original_response(attachments=[file], embed=embed, view=view)
         else:
-            await interaction.response.edit_message(embed=embed, attachments=[file], view=view)
+            await interaction.response.edit_message(attachments=[file], embed=embed, view=view)
     else:
         if interaction.response.is_done():
-            await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=True)
+            await interaction.followup.send(file=file, embed=embed, view=view, ephemeral=True)
         else:
-            await interaction.response.send_message(embed=embed, file=file, view=view, ephemeral=True)
-
-def _rank_base(rank: str) -> str:
-    r = str(rank or "").strip()
-    if not r:
-        return "Unranked"
-    return r.split()[0].capitalize()
-
-
-def _rank_color(rank_base: str) -> discord.Color:
-    m = {
-        "Radiant": discord.Color.gold(),
-        "Immortal": discord.Color.red(),
-        "Ascendant": discord.Color.green(),
-        "Diamond": discord.Color.blue(),
-        "Platinum": discord.Color.teal(),
-        "Gold": discord.Color.gold(),
-        "Silver": discord.Color.light_grey(),
-        "Bronze": discord.Color.dark_orange(),
-        "Iron": discord.Color.dark_grey(),
-        "Unranked": discord.Color.blurple(),
-    }
-    return m.get(rank_base, discord.Color.blurple())
-
-
-def _build_embed(member: discord.Member, profile: dict) -> tuple[discord.Embed, discord.File]:
-    username = str(profile.get("username") or "—").strip()
-    rank_raw = str(profile.get("rank") or "Unranked").strip()
-    wins = int(profile.get("wins") or 0)
-    matches = int(profile.get("matches") or 0)
-
-    rb = _rank_base(rank_raw)
-    color = _rank_color(rb)
-
-    embed = Embed(title=f"Профиль: {member.display_name}", color=color)
-
-    # аватар bytes
-    # ВАЖНО: read() работает только в async-контексте — поэтому bytes забираем снаружи.
-    # Здесь будет подмена в месте вызова.
-    raise RuntimeError("INTERNAL: _build_embed requires avatar_bytes")
-
-
-class Profile(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-
-    @app_commands.command(name="profile", description="Показать свой профиль")
-    async def profile(self, interaction: discord.Interaction):
-        await send_profile_card(interaction, edit=False)
-        return
+            await interaction.response.send_message(file=file, embed=embed, view=view, ephemeral=True)
 
 
 class ProfileView(discord.ui.View):
-    def __init__(self, owner_id: int):
-        super().__init__(timeout=300)
-        self.owner_id = owner_id
+    def __init__(self, discord_id: int):
+        super().__init__(timeout=120)
+        self.discord_id = discord_id
 
-    def _not_owner(self, interaction: discord.Interaction) -> bool:
-        return interaction.user.id != self.owner_id
+    @discord.ui.button(label="🔄 Обновить", style=discord.ButtonStyle.secondary)
+    async def refresh(self, interaction: discord.Interaction, _: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        await send_profile_card(interaction, edit=True)
 
-    @discord.ui.button(label="Редактировать", style=discord.ButtonStyle.primary)
-    async def edit_profile(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self._not_owner(interaction):
-            await interaction.response.send_message("❌ Это не ваш профиль.", ephemeral=True)
-            return
-
-        from modules.lobby.lobby import PlayerProfileModal
+    @discord.ui.button(label="✏️ Редактировать", style=discord.ButtonStyle.primary)
+    async def edit_profile(self, interaction: discord.Interaction, _: discord.ui.Button):
+        # локальный импорт, чтобы не словить циклические импорты
+        from modules.lobby import PlayerProfileModal
         await interaction.response.send_modal(PlayerProfileModal(interaction))
 
-    @discord.ui.button(label="Обновить", style=discord.ButtonStyle.secondary)
-    async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self._not_owner(interaction):
-            await interaction.response.send_message("❌ Это не ваш профиль.", ephemeral=True)
-            return
 
-        profile = await ensure_fresh_rank(interaction.user.id)
-        if not profile or "error" in profile:
-            profile = {"username": "—", "rank": "Unranked", "wins": 0, "matches": 0}
+class Profile(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
 
-        avatar_bytes = None
-        try:
-            avatar_bytes = await interaction.user.display_avatar.read()
-        except Exception:
-            pass
-
-        card_path = generate_profile_card(
-            discord_name=interaction.user.display_name,
-            riot_username=str(profile.get("username") or "—"),
-            rank=str(profile.get("rank") or "Unranked"),
-            wins=int(profile.get("wins") or 0),
-            matches=int(profile.get("matches") or 0),
-            avatar_bytes=avatar_bytes,
-        )
-
-        file = discord.File(card_path, filename="profile.png")
-        rb = _rank_base(str(profile.get("rank") or "Unranked"))
-        embed = Embed(title=f"Профиль: {interaction.user.display_name}", color=_rank_color(rb))
-        embed.set_image(url="attachment://profile.png")
-
-        # Перерисовываем тот же ephemeral-месседж
-        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
-
-    @discord.ui.button(label="Закрыть", style=discord.ButtonStyle.danger)
-    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self._not_owner(interaction):
-            await interaction.response.send_message("❌ Это не ваш профиль.", ephemeral=True)
-            return
-        await interaction.response.edit_message(view=None)
+    @app_commands.command(name="profile", description="Показать профиль игрока")
+    async def profile(self, interaction: discord.Interaction):
+        await send_profile_card(interaction, edit=False)
 
 
-async def setup(bot):
+async def setup(bot: commands.Bot):
     await bot.add_cog(Profile(bot))

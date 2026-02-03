@@ -458,7 +458,7 @@ class LobbySizeButton(discord.ui.Button):
 
 class ProfileButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(label="👤 Профиль", style=discord.ButtonStyle.secondary)
+        super().__init__(label="Профиль", style=discord.ButtonStyle.secondary, emoji="👤")
 
     async def callback(self, interaction: discord.Interaction):
         from modules.commands.profile import send_profile_card
