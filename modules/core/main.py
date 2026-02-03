@@ -96,11 +96,15 @@ async def setup_hook():
 
     bot.close = _close_with_http
 
-    # Синхронизация команд на сервере
+    # Синхронизация команд на сервере (быстро, без ожидания глобального кэша)
     try:
         guild = discord.Object(id=GUILD_ID)
-        await bot.tree.sync(guild=guild)
-        logger.success(f"✅ Slash-команды синхронизированы (guild={GUILD_ID})")
+
+        # ВАЖНО: копируем глобальные команды в guild и синкаем их туда
+        bot.tree.copy_global_to(guild=guild)
+        synced = await bot.tree.sync(guild=guild)
+
+        logger.success(f"✅ Slash-команды синхронизированы в guild={GUILD_ID}. Всего: {len(synced)}")
     except Exception as e:
         logger.error(f"❌ Ошибка синхронизации команд: {e}")
 
