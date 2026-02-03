@@ -29,6 +29,11 @@ class ProfilesCache:
         self._store: dict[int, tuple[float, dict]] = {}
         self._lock = asyncio.Lock()
 
+    async def invalidate(self, discord_id: int) -> None:
+        async with self._lock:
+            if discord_id in self._store:
+                self._store.pop(discord_id, None)
+
     async def get(self, discord_id: int) -> dict:
         now = time.time()
         async with self._lock:
@@ -138,6 +143,7 @@ class JoinLobbyButton(View):
 
         # Топ по победам
         top_ids = await get_leaderboard_top(3)  # список discord_id топ-3
+        logger.info(f"players_data = {players_data}")
         image_path = generate_lobby_image(players_data, top_ids=top_ids)
 
         try:
@@ -496,7 +502,7 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите Riot ID (Name#T
 
         # 3) Тянем актуальный ранг
         try:
-            rank, region_used = await fetch_valorant_rank(riot_id)
+            rank, region_used = await fetch_valorant_rank(riot_id, force=True)
         except ValorantRankError as e:
             await interaction.followup.send(f"❌ Не удалось получить ранг: {e}", ephemeral=True)
             return
@@ -515,6 +521,9 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите Riot ID (Name#T
         except Exception:
             await interaction.followup.send("❌ Ошибка при сохранении профиля.", ephemeral=True)
             return
+
+        # сброс кэша, чтобы сразу рисовалась новая инфа
+        await profiles_cache.invalidate(interaction.user.id)
 
         # 5) Если модалка открывалась при входе в лобби — сразу добавляем
         if self.lobby:

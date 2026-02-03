@@ -7,6 +7,11 @@ from discord.ext import commands
 
 from modules.utils import api_client
 
+from modules.utils.rank_sync import riot_id_is_valid
+from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
+from modules.utils import api_client
+import asyncio
+
 PRIZES_WEBHOOK_TEXT = (
     "Призы:\n"
     " 1️⃣ место <a:arrow:1388296844009930893> 9650 VP + роль \n"
@@ -76,6 +81,59 @@ def admin_only():
 class Admin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    @app_commands.command(name="syncallranks", description="Принудительно синхронизировать ранги всем игрокам")
+    @admin_only()
+    async def syncallranks(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        data = await api_client.get_all_players()
+        rows = data.get("results", data) if isinstance(data, dict) else data
+        if not isinstance(rows, list):
+            await interaction.followup.send("❌ Не удалось получить список игроков из API.", ephemeral=True)
+            return
+
+        updated = failed = skipped = 0
+        sem = asyncio.Semaphore(3)
+
+        async def worker(row: dict):
+            nonlocal updated, failed, skipped
+            discord_id = int(row.get("discord_id") or 0)
+            riot_id = str(row.get("username") or "").strip()
+
+            if not discord_id or not riot_id_is_valid(riot_id):
+                skipped += 1
+                return
+
+            async with sem:
+                try:
+                    rank, _ = await fetch_valorant_rank(riot_id, force=True)
+                    await api_client.update_player_profile(discord_id, rank=rank, create_if_not_exist=False)
+                    updated += 1
+                except ValorantRankError as e:
+                    failed += 1
+                    # если словил 429 — дальше смысла нет
+                    if getattr(e, "status", None) == 429:
+                        raise
+                except Exception:
+                    failed += 1
+                finally:
+                    await asyncio.sleep(0.25)  # мягкий антиспам
+
+        try:
+            for row in rows:
+                await worker(row)
+        except Exception:
+            await interaction.followup.send("⚠ Дошли до лимита/ошибки. Повтори позже.", ephemeral=True)
+            return
+
+        await interaction.followup.send(
+            f"✅ Синхронизация завершена.\n"
+            f"Обновлено: {updated}\n"
+            f"Пропущено: {skipped}\n"
+            f"Ошибок: {failed}",
+            ephemeral=True
+        )
 
     @app_commands.command(name="changerank", description="Изменить ранг игрока (без изменения ника)")
     @app_commands.describe(user="Участник", rank="Ранг (например: Immortal 2)")
@@ -217,7 +275,7 @@ class Admin(commands.Cog):
         embed.add_field(name="/prizeswebhook", value="Отправить сообщение о призах в webhook", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@app_commands.command(name="prizeswebhook", description="Отправить сообщение о призах в заданный webhook")
+    @app_commands.command(name="prizeswebhook", description="Отправить сообщение о призах в заданный webhook")
     @admin_only()
     async def prizeswebhook(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)

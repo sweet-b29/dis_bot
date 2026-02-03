@@ -64,10 +64,6 @@ async def ensure_fresh_rank(discord_id: int, *, force: bool = False) -> dict:
         logger.warning(f"Rank sync unexpected error for {discord_id} ({riot_id}): {e}")
         return profile
 
-    # если ранг уже такой же — всё равно можно обновить timestamp (но это делает Django при rank update).
-    if str(profile.get("rank") or "").strip() == str(new_rank or "").strip():
-        return profile
-
     try:
         await api_client.update_player_profile(discord_id=discord_id, username=None, rank=new_rank, create_if_not_exist=False)
     except Exception as e:

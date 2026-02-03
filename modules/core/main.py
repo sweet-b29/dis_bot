@@ -34,6 +34,8 @@ def ensure_bot_env():
         missing.append("GUILD_ID")
     if not os.getenv("LOBBY_CHANNEL_ID"):
         missing.append("LOBBY_CHANNEL_ID")
+    if not os.getenv("HENRIKDEV_API_KEY"):
+        missing.append("HENRIKDEV_API_KEY")
     if not os.getenv("BOT_TZ"):
         logger.warning("BOT_TZ не задан — по умолчанию будет Asia/Almaty")
     if missing:
