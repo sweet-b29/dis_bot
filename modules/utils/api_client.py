@@ -256,3 +256,9 @@ async def get_leaderboard_top(limit: int = 3) -> list[int]:
         except Exception as e:
             logger.error(f"❌ leaderboard fetch failed for {endpoint}: {e}")
     return []
+
+async def get_player(discord_id: int):
+    return await get_player_profile(discord_id)
+
+async def get_players():
+    return await get_all_players()

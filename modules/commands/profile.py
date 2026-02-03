@@ -3,87 +3,95 @@ from discord import app_commands
 from discord.ext import commands
 
 from modules.utils import api_client
-from modules.utils.rank_sync import ensure_fresh_rank
 from modules.utils.image_generator import generate_profile_card
-from modules.utils.valorant_api import ValorantRankError
+from modules.utils.profile_setup import RiotIdModal
 
 
-async def send_profile_card(interaction: discord.Interaction, *, edit: bool = False):
-    """
-    edit=False  -> отправляет новое сообщение
-    edit=True   -> редактирует текущее (для кнопки "Обновить")
-    """
-    discord_id = interaction.user.id
+def _rank_base(rank: str | None) -> str:
+    if not rank:
+        return "Unranked"
+    return rank.split()[0].lower()
 
-    # 1) Получаем профиль (и пытаемся подтянуть ранг)
+
+def _rank_color(rank: str | None) -> discord.Color:
+    base = _rank_base(rank)
+    colors = {
+        "iron": discord.Color.dark_gray(),
+        "bronze": discord.Color.from_rgb(205, 127, 50),
+        "silver": discord.Color.light_grey(),
+        "gold": discord.Color.gold(),
+        "platinum": discord.Color.teal(),
+        "diamond": discord.Color.blue(),
+        "ascendant": discord.Color.green(),
+        "immortal": discord.Color.red(),
+        "radiant": discord.Color.purple(),
+        "unranked": discord.Color.blurple(),
+    }
+    return colors.get(base, discord.Color.blurple())
+
+
+async def _get_profile(discord_id: int) -> dict:
     try:
-        profile = await ensure_fresh_rank(discord_id, force=False)
-    except ValorantRankError:
-        # если HenrikDev в лимите — просто показываем то, что уже есть в БД
-        profile = await api_client.get_player(discord_id)
+        profile = await api_client.get_player_profile(discord_id)
+        return profile or {}
+    except Exception:
+        return {}
 
-    if not profile:
-        profile = {"username": None, "rank": "Unranked", "wins": 0}
+
+async def _build_profile_payload(member: discord.abc.User) -> tuple[discord.Embed, discord.File]:
+    profile = await _get_profile(member.id)
 
     username = profile.get("username") or "Не указан"
     rank = profile.get("rank") or "Unranked"
-    wins = int(profile.get("wins") or 0)
+    wins = profile.get("wins") or 0
+    matches = profile.get("matches") or 0
 
-    # 2) Аватар
-    avatar_bytes = await interaction.user.display_avatar.read()
-
-    # 3) Генерация картинки
-    out_path = generate_profile_card(
-        discord_id=discord_id,
-        username=username,
-        wins=wins,
-        rank=rank,
-        avatar_bytes=avatar_bytes,
+    embed = discord.Embed(
+        title=f"Профиль: {member.display_name}",
+        description=f"**Riot ID:** `{username}`\n**Ранг:** `{rank}`",
+        color=_rank_color(rank),
     )
+    embed.add_field(name="Победы", value=str(wins), inline=True)
+    embed.add_field(name="Матчи", value=str(matches), inline=True)
 
-    file = discord.File(out_path, filename="profile.png")
-    embed = discord.Embed(title="Профиль игрока")
+    file = await generate_profile_card(member, {"username": username, "rank": rank, "wins": wins, "matches": matches})
     embed.set_image(url="attachment://profile.png")
 
-    view = ProfileView(discord_id=discord_id)
-
-    # 4) Ответ interaction (аккуратно: response может быть уже использован)
-    if edit:
-        if interaction.response.is_done():
-            await interaction.edit_original_response(attachments=[file], embed=embed, view=view)
-        else:
-            await interaction.response.edit_message(attachments=[file], embed=embed, view=view)
-    else:
-        if interaction.response.is_done():
-            await interaction.followup.send(file=file, embed=embed, view=view, ephemeral=True)
-        else:
-            await interaction.response.send_message(file=file, embed=embed, view=view, ephemeral=True)
+    return embed, file
 
 
 class ProfileView(discord.ui.View):
-    def __init__(self, discord_id: int):
-        super().__init__(timeout=120)
-        self.discord_id = discord_id
+    def __init__(self, owner_id: int):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
 
-    @discord.ui.button(label="🔄 Обновить", style=discord.ButtonStyle.secondary)
-    async def refresh(self, interaction: discord.Interaction, _: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        await send_profile_card(interaction, edit=True)
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("❌ Это меню не для тебя.", ephemeral=True)
+            return False
+        return True
 
-    @discord.ui.button(label="✏️ Редактировать", style=discord.ButtonStyle.primary)
-    async def edit_profile(self, interaction: discord.Interaction, _: discord.ui.Button):
-        # локальный импорт, чтобы не словить циклические импорты
-        from modules.lobby import PlayerProfileModal
-        await interaction.response.send_modal(PlayerProfileModal(interaction))
+    @discord.ui.button(label="Редактировать", style=discord.ButtonStyle.primary)
+    async def edit_profile(self, interaction: discord.Interaction, button: discord.ui.Button):
+        profile = await _get_profile(interaction.user.id)
+        default_riot = profile.get("username") if profile else None
+        await interaction.response.send_modal(RiotIdModal(user_id=interaction.user.id, default_riot_id=default_riot))
+
+    @discord.ui.button(label="Обновить", style=discord.ButtonStyle.secondary)
+    async def refresh_profile(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed, file = await _build_profile_payload(interaction.user)
+        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
 
 
 class Profile(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="profile", description="Показать профиль игрока")
+    @app_commands.command(name="profile", description="Показать профиль")
     async def profile(self, interaction: discord.Interaction):
-        await send_profile_card(interaction, edit=False)
+        await interaction.response.defer(ephemeral=True)
+        embed, file = await _build_profile_payload(interaction.user)
+        await interaction.followup.send(embed=embed, file=file, view=ProfileView(interaction.user.id), ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
