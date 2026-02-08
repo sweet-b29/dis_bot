@@ -3,10 +3,10 @@ from discord import app_commands
 from discord.ext import commands
 
 from modules.utils import api_client
+from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
 
 
 # === Rank options (ВАЖНО: Select <= 25 опций, поэтому делим на 2 меню) ===
-
 LOW_RANKS = [
     "Unranked",
     "Iron 1", "Iron 2", "Iron 3",
@@ -33,10 +33,15 @@ def _riot_id_ok(value: str) -> bool:
 
 
 class RankSelectView(discord.ui.View):
-    def __init__(self, owner_id: int, riot_id: str):
+    """
+    Ручной выбор ранга (fallback), если Valorant API не дал данные.
+    Сохраняет (username, rank) в БД.
+    """
+    def __init__(self, owner_id: int, riot_id: str, after_save=None):
         super().__init__(timeout=120)
         self.owner_id = owner_id
         self.riot_id = riot_id
+        self.after_save = after_save  # async callable(interaction, rank)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return interaction.user.id == self.owner_id
@@ -50,14 +55,13 @@ class RankSelectView(discord.ui.View):
                 create_if_not_exist=True
             )
         except Exception:
-            # Не используем внешние API — это должна быть чисто запись в твою Django API/БД
             await interaction.response.edit_message(
                 content="❌ Ошибка при сохранении профиля.",
                 view=None
             )
             return
 
-        # отключаем меню после выбора
+        # disable selects
         for item in self.children:
             item.disabled = True
 
@@ -65,6 +69,12 @@ class RankSelectView(discord.ui.View):
             content=f"✅ Профиль сохранён.\nRiot ID: `{self.riot_id}`\nРанг: **{rank}**",
             view=self
         )
+
+        if self.after_save:
+            try:
+                await self.after_save(interaction, rank)
+            except Exception:
+                pass
 
     @discord.ui.select(
         placeholder="Выбери ранг (Unranked–Gold)",
@@ -87,13 +97,23 @@ class RankSelectView(discord.ui.View):
 
 class EditProfileModal(discord.ui.Modal, title="Профиль игрока"):
     riot_id = discord.ui.TextInput(
-        label="Riot ID",
-        placeholder="Name#TAG",
+        label="Riot ID (Name#TAG)",
+        placeholder="Например: Yuriy#KZ1",
         required=True,
         max_length=32,
     )
 
+    def __init__(self, *, owner_id: int, default_riot_id: str | None = None):
+        super().__init__(timeout=300)
+        self.owner_id = owner_id
+        if default_riot_id:
+            self.riot_id.default = default_riot_id
+
     async def on_submit(self, interaction: discord.Interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("❌ Это окно не для тебя.", ephemeral=True)
+            return
+
         await interaction.response.defer(ephemeral=True)
 
         riot_id_value = self.riot_id.value.strip()
@@ -101,8 +121,47 @@ class EditProfileModal(discord.ui.Modal, title="Профиль игрока"):
             await interaction.followup.send("❌ Укажи Riot ID строго в формате `Name#TAG`.", ephemeral=True)
             return
 
-        view = RankSelectView(owner_id=interaction.user.id, riot_id=riot_id_value)
-        await interaction.followup.send("Выбери ранг из списка:", view=view, ephemeral=True)
+        # 1) Пробуем автоматически получить ранг
+        try:
+            rank, region_used = await fetch_valorant_rank(riot_id_value, force=True)
+        except ValorantRankError as e:
+            # Сохраняем хотя бы Riot ID и даём выбрать ранг вручную
+            try:
+                await api_client.update_player_profile(
+                    interaction.user.id,
+                    username=riot_id_value,
+                    create_if_not_exist=True
+                )
+            except Exception:
+                await interaction.followup.send("❌ Ошибка при сохранении Riot ID.", ephemeral=True)
+                return
+
+            await interaction.followup.send(
+                f"⚠ Не удалось получить ранг автоматически: {e}\nВыбери ранг вручную:",
+                view=RankSelectView(interaction.user.id, riot_id_value),
+                ephemeral=True,
+            )
+            return
+
+        # 2) Автоуспех — сохраняем username+rank
+        try:
+            await api_client.update_player_profile(
+                interaction.user.id,
+                username=riot_id_value,
+                rank=rank,
+                create_if_not_exist=True
+            )
+        except Exception:
+            await interaction.followup.send("❌ Ошибка при сохранении профиля.", ephemeral=True)
+            return
+
+        await interaction.followup.send(
+            f"✅ Профиль сохранён.\nRiot ID: `{riot_id_value}`\nРанг: **{rank}** (region: `{region_used}`)",
+            ephemeral=True
+        )
+
+        # Показываем обновлённую карточку профиля отдельным сообщением
+        await send_profile_card(interaction, edit=False)
 
 
 class ProfileCardView(discord.ui.View):
@@ -111,13 +170,22 @@ class ProfileCardView(discord.ui.View):
 
     @discord.ui.button(label="Редактировать", style=discord.ButtonStyle.primary, emoji="✏️")
     async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(EditProfileModal())
+        # Подставим сохранённый Riot ID, если он есть
+        default_riot = None
+        try:
+            profile = await api_client.get_player_profile(interaction.user.id)
+            default_riot = (profile or {}).get("username")
+        except Exception:
+            pass
+
+        await interaction.response.send_modal(
+            EditProfileModal(owner_id=interaction.user.id, default_riot_id=default_riot)
+        )
 
 
 async def send_profile_card(interaction: discord.Interaction, edit: bool = False):
     discord_id = interaction.user.id
 
-    # читаем только то, что сохранено у тебя в БД (без HenrikDev и без 429)
     try:
         profile = await api_client.get_player_profile(discord_id)
     except Exception:
@@ -136,9 +204,7 @@ async def send_profile_card(interaction: discord.Interaction, edit: bool = False
 
     view = ProfileCardView()
 
-    # ВАЖНО: для кнопки в лобби обычно нужен ephemeral ответ
     if edit:
-        # edit имеет смысл только если ты явно редактируешь существующее сообщение
         if not interaction.response.is_done():
             await interaction.response.edit_message(embed=embed, view=view)
         else:

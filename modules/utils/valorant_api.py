@@ -1,7 +1,7 @@
 import os
 import time
 from urllib.parse import quote
-
+from typing import Any
 import aiohttp
 from loguru import logger
 
@@ -30,6 +30,63 @@ def set_http_session(session: aiohttp.ClientSession) -> None:
     global _session
     _session = session
 
+def _payload_status(payload: dict, fallback: int) -> int:
+    """
+    Некоторые ответы могут приходить с HTTP 200, но внутри JSON status != 200.
+    """
+    try:
+        s = payload.get("status")
+        if isinstance(s, int):
+            return s
+        if isinstance(s, str) and s.isdigit():
+            return int(s)
+    except Exception:
+        pass
+    return fallback
+
+async def fetch_valorant_account_region(
+    riot_id: str,
+    *,
+    platform: str | None=None,
+) -> str:
+    """
+    HenrikDev: GET /valorant/v1/account/{name}/{tag}
+    Возвращает shard/region (eu/na/ap/kr/latam/br)
+    """
+    if _session is None:
+        raise ValorantRankError("HTTP session не установлена (проверь startup порядок).")
+    if not HENRIKDEV_API_KEY:
+        raise ValorantRankError("Синхронизация ранга не настроена: нет HENRIKDEV_API_KEY.")
+
+    name, tag = _parse_riot_id(riot_id)
+    name_q = quote(name, safe="")
+    tag_q = quote(tag, safe="")
+
+    plat = (platform or VALORANT_PLATFORM or "pc").lower().strip()
+    if plat not in {"pc", "console"}:
+        plat = "pc"
+
+    headers = {"Authorization": HENRIKDEV_API_KEY, "Accept": "application/json"}
+    url = f"{HENRIKDEV_BASE_URL}/valorant/v1/account/{name_q}/{tag_q}"
+
+    async with _session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=12)) as resp:
+        payload = await resp.json(content_type=None)
+        st = _payload_status(payload, resp.status)
+
+        if st == 404:
+            raise ValorantRankError("Игрок не найден. Проверь Riot ID.", status=404)
+        if st in (401, 403):
+            raise ValorantRankError("Нет доступа к HenrikDev API (проверь ключ/права).", status=st)
+        if st == 429:
+            raise ValorantRankError("Лимит запросов к HenrikDev. Повтори позже.", status=429)
+        if st != 200:
+            raise ValorantRankError(f"Ошибка HenrikDev account: status={st}", status=st)
+
+        data = payload.get("data") or {}
+        reg = (data.get("region") or data.get("shard") or "").strip().lower()
+        if reg:
+            return reg
+        raise ValorantRankError("Не удалось определить регион аккаунта (пустой ответ).")
 
 def _parse_riot_id(riot_id: str) -> tuple[str, str]:
     raw = (riot_id or "").strip()
@@ -98,7 +155,16 @@ async def fetch_valorant_rank(
         if cached and (now - cached[0]) < VALORANT_RANK_CACHE_TTL:
             return cached[1], cached[2]
 
-    preferred = (region or VALORANT_DEFAULT_REGION or "eu").lower()
+    # Если регион явно не задан — сначала пробуем определить shard по account endpoint
+    preferred = (region or "").strip().lower()
+    if not preferred:
+        try:
+            preferred = await fetch_valorant_account_region(riot_id, platform=platform)
+        except ValorantRankError as e:
+            # не фейлим ранк-синк только из-за account, просто откатываемся на дефолт
+            logger.warning(f"account region fallback: {e}")
+            preferred = (VALORANT_DEFAULT_REGION or "eu").lower()
+
     all_regions = ["eu", "na", "ap", "kr", "latam", "br"]
     regions = [preferred] + [r for r in all_regions if r != preferred]
 
@@ -118,18 +184,32 @@ async def fetch_valorant_rank(
         url = f"{HENRIKDEV_BASE_URL}/valorant/v3/mmr/{reg}/{plat}/{name_q}/{tag_q}"
         try:
             async with _session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=12)) as resp:
-                if resp.status == 404:
+                payload = await resp.json(content_type=None)
+                st = _payload_status(payload, resp.status)
+
+                if st == 404:
                     last_404 = True
                     continue
-                if resp.status == 429:
+                if st == 429:
                     raise ValorantRankError("Лимит запросов к ранкам. Повтори позже.", status=429)
-                if resp.status in (403, 503):
-                    raise ValorantRankError("Сервис рангов временно недоступен (maintenance/ограничение).", status=resp.status)
-                if resp.status != 200:
-                    raise ValorantRankError(f"Ошибка сервиса рангов: HTTP {resp.status}.", status=resp.status)
+                if st in (401, 403):
+                    raise ValorantRankError("Нет доступа к HenrikDev API (проверь ключ/права).", status=st)
+                if st in (503,):
+                    raise ValorantRankError("Сервис рангов временно недоступен (maintenance).", status=st)
+                if st != 200:
+                    # неизвестный статус — пробуем следующий регион
+                    logger.warning(f"HenrikDev mmr bad status={st} (region={reg}) payload_keys={list(payload.keys())}")
+                    continue
 
-                payload = await resp.json(content_type=None)
-                rank_raw = payload.get("data", {}).get("current_data", {}).get("currenttier_patched")
+                data = payload.get("data") or {}
+                current = data.get("current_data") or {}
+                rank_raw = current.get("currenttier_patched")
+
+                # Фоллбэк: если current rank пустой, попробуем highest_rank
+                if not rank_raw:
+                    highest = data.get("highest_rank") or {}
+                    rank_raw = highest.get("patched_tier") or highest.get("patchedTier")
+
                 rank = _normalize_rank(rank_raw)
 
                 _rank_cache[riot_key] = (now, rank, reg)
