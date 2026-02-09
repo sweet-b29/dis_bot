@@ -82,9 +82,11 @@ async def ensure_fresh_rank(
     # Пишем в Django только после успешного ответа API
     updated = await api_client.update_player_profile(
         discord_id,
+        username=riot_id,
         rank=new_rank,
-        create_if_not_exist=False,
-        # если хочешь — добавь на сервере force_rank_update и прокидывай тут при allow_unranked_overwrite
-        # force_rank_update=allow_unranked_overwrite,
+        create_if_not_exist=True,
     )
+
+    if return_updated_only:
+        return updated
     return updated or profile

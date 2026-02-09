@@ -81,47 +81,49 @@ class Admin(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="syncallranks", description="Синхронизировать ранги всех игроков с Valorant")
+    @admin_only()
     async def syncallranks(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        players = await api_client.get_players()  # должен возвращать список игроков
-        if not players:
+        players = await api_client.get_players()
+        # если включат пагинацию DRF — распакуем results
+        if isinstance(players, dict) and "results" in players:
+            players = players["results"]
+
+        if not isinstance(players, list) or not players:
             await interaction.followup.send("Игроков не найдено.", ephemeral=True)
             return
 
-        sem = asyncio.Semaphore(1)
+        total = len(players)
+        msg = await interaction.followup.send(f"⏳ Синк рангов запущен: 0/{total}", ephemeral=True)
+
         updated = 0
         skipped = 0
 
-        async def worker(p):
-            nonlocal updated, skipped
-            async with sem:
-                try:
-                    res = await ensure_fresh_rank(
-                    int(p["discord_id"]),
-                        force=True,
-                        return_updated_only=True,
-                    )
-                    if res is not None:
-                        updated += 1
-                    else:
-                        skipped += 1
-                except ValorantRankError as e:
-                    # если это 429 — лучше стопать весь процесс
-                    msg = str(e).lower()
-                    if "лимит" in msg or "429" in msg or "rate limit" in msg:
-                        raise
-                    skipped += 1
-                finally:
-                    await asyncio.sleep(1.2)  # троттлинг
+        for i, p in enumerate(players, start=1):
+            discord_id = p.get("discord_id")
+            try:
+                discord_id = int(discord_id)
+            except Exception:
+                skipped += 1
+                continue
 
-        try:
-            await asyncio.gather(*(worker(p) for p in players))
-        except ValorantRankError:
-            await interaction.followup.send("⚠️ Дошли до лимита HenrikDev (429). Повтори позже.", ephemeral=True)
-            return
+            res = await ensure_fresh_rank(
+                discord_id,
+                force=True,  # ручной синк — обновляем даже если TTL не истёк
+                allow_unranked_overwrite=False,  # НЕ затираем нормальные ранги на Unranked
+                return_updated_only=True,
+            )
 
-        await interaction.followup.send(f"✅ Синк завершён. Обновлено: {updated}, пропущено: {skipped}", ephemeral=True)
+            if res is not None:
+                updated += 1
+            else:
+                skipped += 1
+
+            if i % 5 == 0 or i == total:
+                await msg.edit(content=f"⏳ Синк рангов: {i}/{total} | обновлено: {updated}, пропущено: {skipped}")
+
+        await msg.edit(content=f"✅ Синк завершён. Обновлено: {updated}, пропущено: {skipped}")
 
     @app_commands.command(name="changerank", description="Изменить ранг игрока (без изменения ника)")
     @app_commands.describe(user="Участник", rank="Ранг (например: Immortal 2)")
