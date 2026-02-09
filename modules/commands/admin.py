@@ -97,8 +97,12 @@ class Admin(commands.Cog):
             nonlocal updated, skipped
             async with sem:
                 try:
-                    res = await ensure_fresh_rank(int(p["discord_id"]), force=False)
-                    if res:
+                    res = await ensure_fresh_rank(
+                    int(p["discord_id"]),
+                        force=True,
+                        return_updated_only=True,
+                    )
+                    if res is not None:
                         updated += 1
                     else:
                         skipped += 1

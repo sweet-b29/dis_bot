@@ -35,6 +35,7 @@ async def ensure_fresh_rank(
     *,
     force: bool = False,
     allow_unranked_overwrite: bool = False,
+    return_updated_only: bool = False,
 ) -> dict | None:
     """
     Обновляет rank в Django, если:
@@ -48,8 +49,8 @@ async def ensure_fresh_rank(
         return None
 
     username = (profile.get("username") or "").strip()
-    if "#" not in username:
-        return profile
+    if not riot_id_is_valid(username):
+        return None if return_updated_only else profile
 
     current_rank = (profile.get("rank") or "").strip() or "Unranked"
 
@@ -61,14 +62,14 @@ async def ensure_fresh_rank(
     last_sync = _parse_iso_dt(last_sync_raw)
 
     if not force and not _is_stale(last_sync):
-        return profile
+        return None if return_updated_only else profile
 
     try:
         # force сюда прокидываем только при ручном синке, иначе можно убить лимиты.
         new_rank, region_used = await fetch_valorant_rank(username, force=force)
     except ValorantRankError as e:
         logger.warning(f"[rank_sync] skip update {discord_id} ({username}): {e}")
-        return profile
+        return None if return_updated_only else profile
 
     # Защита от “обнуления”: если был нормальный ранг, а пришёл Unranked — не затираем.
     if new_rank == "Unranked" and current_rank != "Unranked" and not allow_unranked_overwrite:
@@ -76,7 +77,7 @@ async def ensure_fresh_rank(
             f"[rank_sync] IGNORE Unranked overwrite for {discord_id} ({username}). "
             f"current={current_rank}, fetched={new_rank}"
         )
-        return profile
+        return None if return_updated_only else profile
 
     # Пишем в Django только после успешного ответа API
     updated = await api_client.update_player_profile(
