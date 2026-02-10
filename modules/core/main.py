@@ -11,6 +11,7 @@ from modules.utils.api_client import ensure_api_config
 import aiohttp
 from modules.utils import api_client
 from modules.utils import valorant_api
+from discord import InteractionResponded, HTTPException
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
@@ -131,10 +132,28 @@ async def setup_hook():
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: Exception):
+    """
+    Универсальный хэндлер ошибок slash-команд.
+    Не пытается второй раз отвечать на уже обработанный interaction
+    и игнорирует ошибки протухшего webhook-токена.
+    """
     try:
-        await interaction.response.send_message("❌ Что-то пошло не так. Мы уже смотрим логи.", ephemeral=True)
-    except discord.InteractionResponded:
-        await interaction.followup.send("❌ Что-то пошло не так. Мы уже смотрим логи.", ephemeral=True)
+        if interaction.response.is_done():
+            # Уже был ответ / defer — шлём followup, если токен ещё жив
+            await interaction.followup.send(
+                "❌ Что-то пошло не так. Мы уже смотрим логи.",
+                ephemeral=True,
+            )
+        else:
+            # Ещё не отвечали по этому interaction
+            await interaction.response.send_message(
+                "❌ Что-то пошло не так. Мы уже смотрим логи.",
+                ephemeral=True,
+            )
+    except (InteractionResponded, HTTPException):
+        # Ответ уже был, либо webhook-токен протух — просто логируем.
+        pass
+
     logger.exception(f"App command error: {error}")
 
 if __name__ == "__main__":

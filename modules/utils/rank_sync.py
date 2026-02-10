@@ -4,13 +4,20 @@ from datetime import datetime, timedelta, timezone
 from loguru import logger
 from modules.utils import api_client
 from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
-import re
 
-_RIOT_ID_RE = re.compile(r"^.{3,16}#[0-9A-Za-z]{3,5}$")
 
 def riot_id_is_valid(riot_id: str) -> bool:
-    riot_id = (riot_id or "").strip()
-    return bool(_RIOT_ID_RE.match(riot_id))
+    """
+    Мягкая проверка для всех мест, где мы валидируем сохранённый Riot ID.
+    Разрешаем любые символы (в том числе пробелы и юникод), главное:
+      - есть один символ '#'
+      - до и после него есть хоть что-то.
+    """
+    raw = (riot_id or "").strip()
+    if "#" not in raw or raw.count("#") != 1:
+        return False
+    name, tag = raw.split("#", 1)
+    return bool(name.strip()) and bool(tag.strip())
 
 RANK_TTL = timedelta(seconds=int(os.getenv("RANK_TTL_SECONDS", "21600")))  # 6 часов по умолчанию
 

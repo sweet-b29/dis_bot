@@ -55,34 +55,45 @@ class JoinLobbyButton(View):
 
     @discord.ui.button(label="Присоединиться к лобби", style=discord.ButtonStyle.success)
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Берём профиль из кэша (внутри ensure_fresh_rank → Django + HenrikDev)
         profile = await profiles_cache.get(interaction.user.id)
 
-        # профиля нет — регаем
-        if not profile or not profile.get("id"):
+        # 1) Профиля нет или не заполнен Riot ID → ОДИН раз показываем модалку
+        username = (profile or {}).get("username") if profile else ""
+        if not (username or "").strip():
             await interaction.response.send_modal(PlayerProfileModal(interaction, lobby=self.lobby))
             return
 
-        # Riot ID кривой (например, без #) — заставляем пере-ввести
-        if not riot_id_is_valid(profile.get("username")):
+        # 2) Кривой формат Riot ID (нет # и т.п.) → даём пользователю поправить
+        if not riot_id_is_valid(username):
             await interaction.response.send_modal(PlayerProfileModal(interaction, lobby=self.lobby))
             return
 
-        # ранг пустой — тоже пере-рег (на случай старых записей)
-        if not (profile.get("rank") or "").strip():
-            await interaction.response.send_modal(PlayerProfileModal(interaction, lobby=self.lobby))
-            return
+        # 3) Пустой ранг — считаем его Unranked, но не мучаем модалкой
+        rank = (profile.get("rank") or "").strip() if profile else ""
+        if not rank:
+            try:
+                profile = await api_client.update_player_profile(
+                    interaction.user.id,
+                    username=username,
+                    rank="Unranked",
+                    create_if_not_exist=True,
+                )
+                await profiles_cache.invalidate(interaction.user.id)
+            except Exception as e:
+                logger.warning(f"Не удалось автоматически выставить Unranked для {interaction.user.id}: {e}")
 
-        # дальше оставляй твою текущую логику defer/ban/add_member без изменений
+        # 4) Дальше — твоя текущая логика проверки бана и добавления в лобби
         try:
             await interaction.response.defer(ephemeral=True)
         except discord.InteractionResponded:
-            pass  # если уже ответили
+            pass  # если уже ответили (редкий случай)
 
         ban = await is_banned(interaction.user.id)
         if ban.get("banned"):
             text = render_ban_message(
                 expires_at_iso=ban.get("expires_at", ""),
-                reason=ban.get("reason")
+                reason=ban.get("reason"),
             )
             if interaction.response.is_done():
                 await interaction.followup.send(text, ephemeral=True)
@@ -108,7 +119,7 @@ class JoinLobbyButton(View):
             try:
                 await interaction.followup.send(
                     content=f"{interaction.user.mention}, вы присоединились к лобби!",
-                    ephemeral=True
+                    ephemeral=True,
                 )
             except (discord.NotFound, discord.HTTPException):
                 logger.warning(f"⚠ Interaction истёк или недействителен для {interaction.user}")

@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -6,9 +7,11 @@ from discord import app_commands
 from discord.ext import commands
 
 from modules.utils.rank_sync import ensure_fresh_rank
-from modules.utils.valorant_api import ValorantRankError
 from modules.utils import api_client
-import asyncio
+
+from loguru import logger
+
+from modules.utils.valorant_api import ValorantRankError
 
 PRIZES_WEBHOOK_TEXT = (
     "Призы:\n"
@@ -80,50 +83,94 @@ class Admin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="syncallranks", description="Синхронизировать ранги всех игроков с Valorant")
-    @admin_only()
+    @app_commands.command(
+        name="syncallranks",
+        description="Синхронизировать ранги всех игроков с Valorant",
+    )
     async def syncallranks(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        # 1. Сразу отвечаем interaction-ом, чтобы Discord был доволен
+        await interaction.response.send_message(
+            "⏳ Запускаю синхронизацию рангов. Это может занять несколько минут.",
+            ephemeral=True,
+        )
 
+        # 2. Берём список игроков из Django
         players = await api_client.get_players()
-        # если включат пагинацию DRF — распакуем results
-        if isinstance(players, dict) and "results" in players:
-            players = players["results"]
-
-        if not isinstance(players, list) or not players:
-            await interaction.followup.send("Игроков не найдено.", ephemeral=True)
+        if not players:
+            await interaction.channel.send("⚠️ Игроков для синхронизации не найдено.")
             return
 
         total = len(players)
-        msg = await interaction.followup.send(f"⏳ Синк рангов запущен: 0/{total}", ephemeral=True)
-
         updated = 0
         skipped = 0
+        errors = 0
 
+        # 3. Обычное сообщение в канале, которое будем редактировать
+        status_msg = await interaction.channel.send(
+            f"⏳ Синк рангов: 0/{total} | обновлено: 0, пропущено: 0, ошибок: 0"
+        )
+
+        # 4. Последовательно обрабатываем всех игроков
         for i, p in enumerate(players, start=1):
-            discord_id = p.get("discord_id")
+            discord_id = int(p["discord_id"])
+
             try:
-                discord_id = int(discord_id)
-            except Exception:
-                skipped += 1
-                continue
+                # force=True — игнорируем TTL, всегда тянем свежий ранг
+                # return_updated_only=True — None, если ничего не обновили.
+                res = await ensure_fresh_rank(
+                    discord_id,
+                    force=True,
+                    return_updated_only=True,
+                )
 
-            res = await ensure_fresh_rank(
-                discord_id,
-                force=True,  # ручной синк — обновляем даже если TTL не истёк
-                allow_unranked_overwrite=False,  # НЕ затираем нормальные ранги на Unranked
-                return_updated_only=True,
+                if res is not None:
+                    updated += 1
+                else:
+                    skipped += 1
+
+            except ValorantRankError as e:
+                errors += 1
+                msg = str(e).lower()
+
+                # Если упёрлись в лимит HenrikDev — честно останавливаемся
+                if "лимит" in msg or "429" in msg or "rate limit" in msg:
+                    await status_msg.edit(
+                        content=(
+                            f"⚠️ Остановили синк на {i}/{total}: достигнут лимит HenrikDev.\n"
+                            f"Обновлено: {updated}, пропущено: {skipped}, ошибок: {errors}"
+                        )
+                    )
+                    return
+
+                # Все остальные ошибки по конкретному игроку просто логируем
+                logger.warning(
+                    f"[syncallranks] ошибка при обновлении {discord_id}: {e}"
+                )
+
+            # 5. Периодически обновляем прогресс-сообщение
+            if i == 1 or i == total or (i % 5) == 0:
+                try:
+                    await status_msg.edit(
+                        content=(
+                            f"⏳ Синк рангов: {i}/{total} | "
+                            f"обновлено: {updated}, пропущено: {skipped}, ошибок: {errors}"
+                        )
+                    )
+                except Exception as e:
+                    # Не рушим процесс из-за проблем с редактированием сообщения
+                    logger.warning(f"[syncallranks] не удалось обновить статус: {e}")
+
+            # 6. Троттлинг: примерно 1 запрос в секунду
+            await asyncio.sleep(1.2)
+
+        # 7. Финальный статус
+        await status_msg.edit(
+            content=(
+                f"✅ Синк завершён.\n"
+                f"Обработано: {total}, обновлено: {updated}, "
+                f"пропущено: {skipped}, ошибок: {errors}"
             )
-
-            if res is not None:
-                updated += 1
-            else:
-                skipped += 1
-
-            if i % 5 == 0 or i == total:
-                await msg.edit(content=f"⏳ Синк рангов: {i}/{total} | обновлено: {updated}, пропущено: {skipped}")
-
-        await msg.edit(content=f"✅ Синк завершён. Обновлено: {updated}, пропущено: {skipped}")
+        )
 
     @app_commands.command(name="changerank", description="Изменить ранг игрока (без изменения ника)")
     @app_commands.describe(user="Участник", rank="Ранг (например: Immortal 2)")
