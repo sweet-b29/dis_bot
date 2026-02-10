@@ -178,25 +178,23 @@ async def fetch_valorant_rank(riot_id: str) -> Tuple[str, str]:
             # --- парсим ранг ---
             data = payload.get("data") or {}
 
-            # --- v3 схема: current.tier.name ---
+            # --- ТОЛЬКО текущий ранг (АКТУАЛЬНЫЙ) ---
+            data = payload.get("data") or {}
+
+            # v3 current
             current_v3 = data.get("current") or {}
             current_tier_v3 = current_v3.get("tier") or {}
-            rank_raw: str | None = current_tier_v3.get("name")
+            rank_raw = current_tier_v3.get("name")
 
-            # --- fallback: peak.tier.name (v3) ---
-            if not rank_raw:
-                peak_v3 = data.get("peak") or {}
-                peak_tier_v3 = peak_v3.get("tier") or {}
-                rank_raw = peak_tier_v3.get("name")
-
-            # --- дополнительный fallback: старая v2-схема ---
+            # fallback v2 current (на случай старого ответа API)
             if not rank_raw:
                 current_v2 = data.get("current_data") or {}
                 rank_raw = current_v2.get("currenttier_patched")
 
-            if not rank_raw:
-                highest_v2 = data.get("highest_rank") or {}
-                rank_raw = highest_v2.get("patched_tier") or highest_v2.get("patchedTier")
+            # ❌ ВАЖНО:
+            # ❌ НЕ используем peak
+            # ❌ НЕ используем highest_rank
+            # ❌ если current пустой → считаем Unranked
 
             rank = _normalize_rank(rank_raw)
 
