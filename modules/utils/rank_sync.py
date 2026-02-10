@@ -47,20 +47,26 @@ async def ensure_fresh_rank(
     """
     Обновляет rank в Django, если:
       - force=True, либо rank_last_sync устарел (TTL).
-    Критично:
+
+    Важно:
       - при ошибках API НЕ перезаписывает ранг на Unranked
       - Unranked поверх существующего ранга пишет только если allow_unranked_overwrite=True
     """
+    # 1. Берём профиль из Django
     profile = await api_client.get_player(discord_id)
     if not profile:
         return None
 
+    # 2. Riot ID берём из username и валидируем
     username = (profile.get("username") or "").strip()
     if not riot_id_is_valid(username):
+        # Нет Riot ID или формат кривой — ничего не трогаем
         return None if return_updated_only else profile
 
+    # 3. Текущий ранг (по умолчанию считаем Unranked)
     current_rank = (profile.get("rank") or "").strip() or "Unranked"
 
+    # 4. TTL — когда в последний раз синкали ранг
     last_sync_raw = (
         profile.get("rank_last_sync")
         or profile.get("rank_last_sync_at")
@@ -68,17 +74,21 @@ async def ensure_fresh_rank(
     )
     last_sync = _parse_iso_dt(last_sync_raw)
 
+    # Если не force и TTL ещё не истёк — выходим
     if not force and not _is_stale(last_sync):
         return None if return_updated_only else profile
 
+    # 5. Тянем актуальный ранг через HenrikDev по username (Riot ID)
     try:
-        # force сюда прокидываем только при ручном синке, иначе можно убить лимиты.
+        # force=True сюда приходит только из /syncallranks
         new_rank, region_used = await fetch_valorant_rank(username, force=force)
     except ValorantRankError as e:
         logger.warning(f"[rank_sync] skip update {discord_id} ({username}): {e}")
         return None if return_updated_only else profile
 
-    # Защита от “обнуления”: если был нормальный ранг, а пришёл Unranked — не затираем.
+    # 6. Защита от «обнуления»:
+    # Был нормальный ранг, а API вернул Unranked — не переписываем,
+    # если явно не разрешили allow_unranked_overwrite.
     if new_rank == "Unranked" and current_rank != "Unranked" and not allow_unranked_overwrite:
         logger.warning(
             f"[rank_sync] IGNORE Unranked overwrite for {discord_id} ({username}). "
@@ -86,14 +96,13 @@ async def ensure_fresh_rank(
         )
         return None if return_updated_only else profile
 
-    # Пишем в Django только после успешного ответа API
+    # 7. Пишем в Django только после успешного ответа от API
     updated = await api_client.update_player_profile(
         discord_id,
-        username=riot_id,
         rank=new_rank,
-        create_if_not_exist=True,
+        create_if_not_exist=False,
+        # при желании можно добавить force_rank_update и прокидывать сюда
+        # force_rank_update=allow_unranked_overwrite,
     )
 
-    if return_updated_only:
-        return updated
     return updated or profile
