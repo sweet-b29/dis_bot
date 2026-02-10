@@ -83,93 +83,48 @@ class Admin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(
-        name="syncallranks",
-        description="Синхронизировать ранги всех игроков с Valorant",
-    )
+    @app_commands.command(name="syncallranks", description="Синхронизировать ранги всех игроков с Valorant")
     async def syncallranks(self, interaction: discord.Interaction):
-        # 1. Сразу отвечаем interaction-ом, чтобы Discord был доволен
-        await interaction.response.send_message(
-            "⏳ Запускаю синхронизацию рангов. Это может занять несколько минут.",
-            ephemeral=True,
-        )
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
-        # 2. Берём список игроков из Django
-        players = await api_client.get_players()
+        players = await api_client.get_players()  # должен возвращать список игроков
         if not players:
-            await interaction.channel.send("⚠️ Игроков для синхронизации не найдено.")
+            await interaction.followup.send("Игроков не найдено.", ephemeral=True)
             return
 
-        total = len(players)
+        sem = asyncio.Semaphore(1)
         updated = 0
         skipped = 0
-        errors = 0
 
-        # 3. Обычное сообщение в канале, которое будем редактировать
-        status_msg = await interaction.channel.send(
-            f"⏳ Синк рангов: 0/{total} | обновлено: 0, пропущено: 0, ошибок: 0"
-        )
-
-        # 4. Последовательно обрабатываем всех игроков
-        for i, p in enumerate(players, start=1):
-            discord_id = int(p["discord_id"])
-
-            try:
-                # force=True — игнорируем TTL, всегда тянем свежий ранг
-                # return_updated_only=True — None, если ничего не обновили.
-                res = await ensure_fresh_rank(
-                    discord_id,
-                    force=True,
-                    return_updated_only=True,
-                )
-
-                if res is not None:
-                    updated += 1
-                else:
-                    skipped += 1
-
-            except ValorantRankError as e:
-                errors += 1
-                msg = str(e).lower()
-
-                # Если упёрлись в лимит HenrikDev — честно останавливаемся
-                if "лимит" in msg or "429" in msg or "rate limit" in msg:
-                    await status_msg.edit(
-                        content=(
-                            f"⚠️ Остановили синк на {i}/{total}: достигнут лимит HenrikDev.\n"
-                            f"Обновлено: {updated}, пропущено: {skipped}, ошибок: {errors}"
-                        )
-                    )
-                    return
-
-                # Все остальные ошибки по конкретному игроку просто логируем
-                logger.warning(
-                    f"[syncallranks] ошибка при обновлении {discord_id}: {e}"
-                )
-
-            # 5. Периодически обновляем прогресс-сообщение
-            if i == 1 or i == total or (i % 5) == 0:
+        async def worker(p):
+            nonlocal updated, skipped
+            async with sem:
                 try:
-                    await status_msg.edit(
-                        content=(
-                            f"⏳ Синк рангов: {i}/{total} | "
-                            f"обновлено: {updated}, пропущено: {skipped}, ошибок: {errors}"
-                        )
-                    )
-                except Exception as e:
-                    # Не рушим процесс из-за проблем с редактированием сообщения
-                    logger.warning(f"[syncallranks] не удалось обновить статус: {e}")
+                    # форсим запрос к HenrikDev, игнорируя TTL
+                    res = await ensure_fresh_rank(int(p["discord_id"]), force=True)
+                    if res:
+                        updated += 1
+                    else:
+                        skipped += 1
+                except ValorantRankError as e:
+                    # на всякий случай — если когда-нибудь начнём пробрасывать ошибку
+                    msg = str(e).lower()
+                    if "лимит" in msg or "429" in msg or "rate limit" in msg:
+                        raise
+                    skipped += 1
+                finally:
+                    # лёгкий локальный троттлинг поверх глобального в valorant_api.py
+                    await asyncio.sleep(1.2)
 
-            # 6. Троттлинг: примерно 1 запрос в секунду
-            await asyncio.sleep(1.2)
+        try:
+            await asyncio.gather(*(worker(p) for p in players))
+        except ValorantRankError:
+            await interaction.followup.send("⚠️ Дошли до лимита HenrikDev (429). Повтори позже.", ephemeral=True)
+            return
 
-        # 7. Финальный статус
-        await status_msg.edit(
-            content=(
-                f"✅ Синк завершён.\n"
-                f"Обработано: {total}, обновлено: {updated}, "
-                f"пропущено: {skipped}, ошибок: {errors}"
-            )
+        await interaction.followup.send(
+            f"✅ Синк завершён. Обновлено: {updated}, пропущено: {skipped}",
+            ephemeral=True,
         )
 
     @app_commands.command(name="changerank", description="Изменить ранг игрока (без изменения ника)")

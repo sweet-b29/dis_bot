@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import os
 import time
+import asyncio
 from urllib.parse import quote
 from typing import Any
 
@@ -13,7 +16,7 @@ VALORANT_DEFAULT_REGION = os.getenv("VALORANT_DEFAULT_REGION", "eu").strip().low
 VALORANT_PLATFORM = os.getenv("VALORANT_PLATFORM", "pc").strip().lower()
 VALORANT_RANK_CACHE_TTL = float(os.getenv("VALORANT_RANK_CACHE_TTL", "3600"))  # seconds
 
-# HenrikDev: 30 req / 60s
+# HenrikDev free plan: 30 req / 60s
 HENRIKDEV_RATE_LIMIT = int(os.getenv("HENRIKDEV_RATE_LIMIT", "30"))
 HENRIKDEV_RATE_WINDOW = 60.0  # seconds
 
@@ -23,12 +26,12 @@ _session: aiohttp.ClientSession | None = None
 # riot_id_lower -> (ts, rank, region)
 _rank_cache: dict[str, tuple[float, str, str]] = {}
 
-# список таймстемпов последних запросов к HenrikDev
+# timestamps последних запросов к HenrikDev
 _request_times: list[float] = []
 
 
 class ValorantRankError(RuntimeError):
-    """Читаемая ошибка для UI (модалка/кнопки)."""
+    """Читаемая ошибка для UI (модалки/кнопки)."""
 
     def __init__(self, message: str, *, status: int | None = None):
         super().__init__(message)
@@ -82,7 +85,8 @@ def _normalize_rank(rank: str | None) -> str:
 
 async def _respect_rate_limit() -> None:
     """
-    Глобальный rate-limit: не больше HENRIKDEV_RATE_LIMIT запросов за HENRIKDEV_RATE_WINDOW секунд.
+    Глобальный rate-limit: не больше HENRIKDEV_RATE_LIMIT запросов
+    за HENRIKDEV_RATE_WINDOW секунд.
     Работает для всех вызовов fetch_valorant_rank (включая /syncallranks).
     """
     if HENRIKDEV_RATE_LIMIT <= 0:
@@ -96,6 +100,7 @@ async def _respect_rate_limit() -> None:
     if len(_request_times) >= HENRIKDEV_RATE_LIMIT:
         sleep_for = HENRIKDEV_RATE_WINDOW - (now - _request_times[0]) + 0.1
         if sleep_for > 0:
+            logger.debug(f"HenrikDev rate limit reached, sleep {sleep_for:.1f}s")
             await asyncio.sleep(sleep_for)
 
     _request_times.append(time.time())
@@ -153,7 +158,11 @@ async def fetch_valorant_rank(
 
         try:
             await _respect_rate_limit()
-            async with _session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=12)) as resp:
+            async with _session.get(
+                url,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=12),
+            ) as resp:
                 if resp.status == 404:
                     last_404 = True
                     continue
