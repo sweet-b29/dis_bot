@@ -1,34 +1,37 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Optional
 
 from loguru import logger
 
 from modules.utils import api_client
 from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
 
-# === Riot ID helpers ===
+# ===== Валидация Riot ID =====
 
+# Любые символы (в т.ч. кириллица), главное — есть "#"
+# и разумные длины name/tag
 def riot_id_is_valid(riot_id: str) -> bool:
-    """
-    Более мягкая валидация:
-      - ровно один '#'
-      - части до и после не пустые
-      - допускаем юникод и пробелы (HenrikDev это переварит)
-    """
-    raw = (riot_id or "").strip()
-    if "#" not in raw or raw.count("#") != 1:
+    riot_id = (riot_id or "").strip()
+    if "#" not in riot_id:
         return False
-    name, tag = raw.split("#", 1)
-    return bool(name.strip()) and bool(tag.strip())
+    name, tag = riot_id.split("#", 1)
+    name = name.strip()
+    tag = tag.strip()
+    return 3 <= len(name) <= 16 and 3 <= len(tag) <= 5
 
 
-RANK_TTL = timedelta(seconds=int(os.getenv("RANK_TTL_SECONDS", "21600")))  # 6 часов
+# ===== TTL для повторного запроса =====
+
+RANK_TTL = timedelta(
+    seconds=int(os.getenv("RANK_TTL_SECONDS", "21600"))
+)  # по умолчанию 6 часов
 
 
-def _parse_iso_dt(value: str | None) -> datetime | None:
+def _parse_iso_dt(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
     try:
@@ -36,61 +39,83 @@ def _parse_iso_dt(value: str | None) -> datetime | None:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
-    except ValueError:
+    except Exception:
         return None
 
 
-def _is_stale(last_sync: datetime | None) -> bool:
-    if last_sync is None:
-        return True
-    now = datetime.now(timezone.utc)
-    return now - last_sync > RANK_TTL
+def _is_fresh(last_sync: Optional[datetime]) -> bool:
+    if not last_sync:
+        return False
+    return datetime.now(timezone.utc) - last_sync < RANK_TTL
 
 
 async def ensure_fresh_rank(
     discord_id: int,
+    username: Optional[str] = None,
     *,
     force: bool = False,
     allow_unranked_overwrite: bool = False,
     return_updated_only: bool = False,
-) -> dict[str, Any] | None:
+):
     """
-    Обновляет rank игрока в Django при необходимости.
+    Обновить ранг игрока через HenrikDev.
 
-    Правила:
-      * если force=True — всегда идём в HenrikDev, игнорируя TTL;
-      * если force=False — идём в HenrikDev только когда rank_last_sync устарел;
-      * при ошибках HenrikDev НЕ перезатираем ранг на Unranked;
-      * если HenrikDev вернул Unranked, а в БД уже есть рейтинг, то
-        перезаписываем его только если allow_unranked_overwrite=True.
+    Параметры:
+        discord_id                — Discord ID игрока
+        username                  — Riot ID, если уже известен (Name#TAG).
+                                    Если None — читаем из Django.
+        force                     — игнорировать TTL и всегда ходить в HenrikDev
+        allow_unranked_overwrite  — если True, то даже "Unranked" перезаписывает
+                                    существующий ранг в БД.
+        return_updated_only       — если True, вернуть профиль только если он
+                                    действительно обновился; иначе вернуть текущий.
+
+    Возвращает:
+        dict профиля игрока (то, что вернула Django API) или None.
     """
-    profile = await api_client.get_player(discord_id)
+    # 1) тянем профиль из Django, чтобы знать текущий ранг и Riot ID
+    try:
+        profile = await api_client.get_player_profile(discord_id)
+    except Exception as e:
+        logger.error(f"[rank_sync] failed to load profile {discord_id}: {e}")
+        profile = None
+
     if not profile:
-        logger.warning(f"[rank_sync] player {discord_id} not found in API")
+        logger.warning(f"[rank_sync] profile not found for discord_id={discord_id}")
         return None
 
-    username = (profile.get("username") or "").strip()
-    if not riot_id_is_valid(username):
-        logger.warning(f"[rank_sync] player {discord_id} has invalid Riot ID: {username!r}")
-        return None if return_updated_only else profile
+    current_rank = (profile.get("rank") or "Unranked").strip()
+    riot_id = (username or profile.get("username") or "").strip()
 
     last_sync = _parse_iso_dt(profile.get("rank_last_sync"))
-    if not force and not _is_stale(last_sync):
-        # данные ещё свежие — ничего не делаем
+
+    # 2) TTL — если не force и данные свежие, то просто выходим
+    if not force and _is_fresh(last_sync):
+        logger.debug(f"[rank_sync] ttl ok for {discord_id}, skip request")
         return None if return_updated_only else profile
 
+    # 3) Без Riot ID обновить ранг нельзя
+    if not riot_id or not riot_id_is_valid(riot_id):
+        logger.warning(f"[rank_sync] invalid or empty riot_id for {discord_id}: '{riot_id}'")
+        return None if return_updated_only else profile
+
+    # 4) Запрашиваем ранг с HenrikDev
     try:
-        new_rank, region_used = await fetch_valorant_rank(username, force=force)
+        new_rank, region_used = await fetch_valorant_rank(riot_id)
     except ValorantRankError as e:
-        logger.warning(f"[rank_sync] skip update {discord_id} ({username}): {e}")
-        return None if return_updated_only else profile
+        logger.warning(
+            f"[rank_sync] HenrikDev error for {discord_id} ({riot_id}): {e} (status={getattr(e, 'status', None)})"
+        )
+        # наружу бросаем дальше, чтобы /syncallranks мог остановиться на 429
+        raise
 
-    current_rank = (profile.get("rank") or "Unranked").strip() or "Unranked"
-    new_rank = (new_rank or "Unranked").strip() or "Unranked"
+    new_rank = (new_rank or "Unranked").strip()
 
-    if new_rank == current_rank and not allow_unranked_overwrite:
-        logger.info(
-            f"[rank_sync] {discord_id} ({username}) rank unchanged: {current_rank}"
+    # 5) Логика перезаписи
+    if new_rank == current_rank:
+        # вообще ничего не изменилось
+        logger.debug(
+            f"[rank_sync] rank unchanged for {discord_id} ({riot_id}): {current_rank}"
         )
         return None if return_updated_only else profile
 
@@ -99,16 +124,28 @@ async def ensure_fresh_rank(
         and current_rank != "Unranked"
         and not allow_unranked_overwrite
     ):
+        # Защита, чтобы случайный Unranked не убил нормальный ранг,
+        # если мы дергаем неадминские обновления.
         logger.warning(
-            f"[rank_sync] IGNORE Unranked overwrite for {discord_id} ({username}). "
+            f"[rank_sync] IGNORE Unranked overwrite for {discord_id} ({riot_id}). "
             f"current={current_rank}, fetched={new_rank}"
         )
         return None if return_updated_only else profile
 
-    # Пишем в Django только после успешного ответа API
-    updated = await api_client.update_player_profile(
-        discord_id,
-        rank=new_rank,
-        create_if_not_exist=False,
+    # 6) Пишем в Django только после успешного ответа HenrikDev
+    try:
+        updated = await api_client.update_player_profile(
+            discord_id,
+            rank=new_rank,
+            create_if_not_exist=False,
+        )
+    except Exception as e:
+        logger.error(f"[rank_sync] failed to update profile {discord_id}: {e}")
+        return None if return_updated_only else profile
+
+    logger.info(
+        f"[rank_sync] rank updated for {discord_id} ({riot_id}): "
+        f"{current_rank} -> {new_rank}"
     )
+
     return updated or profile

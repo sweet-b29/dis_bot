@@ -83,47 +83,86 @@ class Admin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="syncallranks", description="Синхронизировать ранги всех игроков с Valorant")
-    async def syncallranks(self, interaction: discord.Interaction):
+    @app_commands.command(name="syncallranks", description="Синхронизировать ранги всех игроков через HenrikDev")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def sync_all_ranks(self, interaction: discord.Interaction):
+        """
+        Медленный, но гарантированный синк:
+        - идём по игрокам ПО ОЧЕРЕДИ (без gather, без параллелизма)
+        - внутри ensure_fresh_rank уже есть rate-limit HenrikDev
+        """
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        players = await api_client.get_players()  # должен возвращать список игроков
-        if not players:
-            await interaction.followup.send("Игроков не найдено.", ephemeral=True)
-            return
-
-        sem = asyncio.Semaphore(1)
-        updated = 0
-        skipped = 0
-
-        async def worker(p):
-            nonlocal updated, skipped
-            async with sem:
-                try:
-                    # форсим запрос к HenrikDev, игнорируя TTL
-                    res = await ensure_fresh_rank(int(p["discord_id"]), force=True)
-                    if res:
-                        updated += 1
-                    else:
-                        skipped += 1
-                except ValorantRankError as e:
-                    # на всякий случай — если когда-нибудь начнём пробрасывать ошибку
-                    msg = str(e).lower()
-                    if "лимит" in msg or "429" in msg or "rate limit" in msg:
-                        raise
-                    skipped += 1
-                finally:
-                    # лёгкий локальный троттлинг поверх глобального в valorant_api.py
-                    await asyncio.sleep(1.2)
-
         try:
-            await asyncio.gather(*(worker(p) for p in players))
-        except ValorantRankError:
-            await interaction.followup.send("⚠️ Дошли до лимита HenrikDev (429). Повтори позже.", ephemeral=True)
+            players = await api_client.get_all_players()
+        except Exception as e:
+            await interaction.followup.send(f"❌ Не удалось получить список игроков: {e}", ephemeral=True)
             return
+
+        if not players:
+            await interaction.followup.send("⚠️ В базе нет игроков.", ephemeral=True)
+            return
+
+        total = len(players)
+        updated = 0
+        skipped_no_riot = 0
+        errors = 0
+
+        for idx, p in enumerate(players, start=1):
+            discord_id = p.get("discord_id")
+            username = p.get("username")
+
+            if not discord_id:
+                skipped_no_riot += 1
+                continue
+
+            # можно с кастомным Riot ID, если он есть
+            riot_id = (username or "").strip()
+
+            if not riot_id:
+                skipped_no_riot += 1
+                continue
+
+            try:
+                changed = await ensure_fresh_rank(
+                    discord_id=int(discord_id),
+                    username=riot_id,
+                    force=True,
+                    allow_unranked_overwrite=True,
+                    return_updated_only=True,
+                )
+                if changed:
+                    updated += 1
+
+            except ValorantRankError as e:
+                msg = str(e).lower()
+                # если словили лимит 429 — сразу останавливаемся
+                if "429" in msg or "лимит" in msg or "rate limit" in msg:
+                    await interaction.followup.send(
+                        f"⚠️ Остановлено из-за лимита HenrikDev (429).\n"
+                        f"Всего игроков: {total}\n"
+                        f"Успешно обновлено: {updated}\n"
+                        f"Без Riot ID: {skipped_no_riot}\n"
+                        f"Ошибок (кроме лимита): {errors}",
+                        ephemeral=True,
+                    )
+                    return
+                errors += 1
+                continue
+
+            except Exception as e:
+                errors += 1
+                continue
+
+            # чуть отдаём управление циклу событий, чтобы бот не зависал
+            await asyncio.sleep(0)
 
         await interaction.followup.send(
-            f"✅ Синк завершён. Обновлено: {updated}, пропущено: {skipped}",
+            f"✅ Синхронизация завершена.\n"
+            f"Всего игроков: {total}\n"
+            f"Обновлено рангов: {updated}\n"
+            f"Без Riot ID: {skipped_no_riot}\n"
+            f"Ошибок: {errors}",
             ephemeral=True,
         )
 
