@@ -176,7 +176,28 @@ async def fetch_valorant_rank(riot_id: str) -> Tuple[str, str]:
                 raise ValorantRankError(f"Неожиданный ответ HenrikDev: HTTP {status}, status={api_status}", status=status)
 
             # --- парсим ранг ---
-            rank_raw = _extract_rank_from_v2(payload)
+            data = payload.get("data") or {}
+
+            # --- v3 схема: current.tier.name ---
+            current_v3 = data.get("current") or {}
+            current_tier_v3 = current_v3.get("tier") or {}
+            rank_raw: str | None = current_tier_v3.get("name")
+
+            # --- fallback: peak.tier.name (v3) ---
+            if not rank_raw:
+                peak_v3 = data.get("peak") or {}
+                peak_tier_v3 = peak_v3.get("tier") or {}
+                rank_raw = peak_tier_v3.get("name")
+
+            # --- дополнительный fallback: старая v2-схема ---
+            if not rank_raw:
+                current_v2 = data.get("current_data") or {}
+                rank_raw = current_v2.get("currenttier_patched")
+
+            if not rank_raw:
+                highest_v2 = data.get("highest_rank") or {}
+                rank_raw = highest_v2.get("patched_tier") or highest_v2.get("patchedTier")
+
             rank = _normalize_rank(rank_raw)
 
             logger.info(f"[HenrikDev] {riot_id} -> {rank} (region={region})")
