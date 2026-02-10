@@ -22,6 +22,35 @@ _MIN_INTERVAL_SECONDS = 2.1
 # Кеш рангов, чтобы не дёргать HenrikDev лишний раз
 _RANK_CACHE_TTL = int(os.getenv("VALORANT_RANK_CACHE_TTL", "900"))  # 15 минут по умолчанию
 
+# Глобальная сессия для всех запросов к HenrikDev
+_session: Optional[aiohttp.ClientSession] = None
+
+
+def set_http_session(session: aiohttp.ClientSession) -> None:
+    """Привязываем уже созданную сессию бота к нашему модулю."""
+    global _session
+    _session = session
+
+
+async def get_http_session() -> aiohttp.ClientSession:
+    """
+    Возвращает текущую сессию.
+    Если по какой-то причине её ещё нет — создаёт свою.
+    (обычно будет использоваться уже созданная в main.py)
+    """
+    global _session
+    if _session is None:
+        _session = aiohttp.ClientSession()
+    return _session
+
+
+async def close_http_session() -> None:
+    """Аккуратно закрываем сессию при выключении бота."""
+    global _session
+    if _session is not None:
+        await _session.close()
+        _session = None
+
 
 @dataclass
 class ValorantRankError(Exception):
@@ -31,26 +60,8 @@ class ValorantRankError(Exception):
     def __str__(self) -> str:
         return self.message
 
-
-_session: Optional[aiohttp.ClientSession] = None
 _last_request_ts: float = 0.0
 _rank_cache: dict[str, tuple[float, str, str]] = {}  # riot_id_lower -> (ts, rank, region)
-
-
-async def _get_session() -> aiohttp.ClientSession:
-    global _session
-    if _session is None or _session.closed:
-        timeout = aiohttp.ClientTimeout(total=20, connect=10, sock_read=10)
-        _session = aiohttp.ClientSession(timeout=timeout)
-    return _session
-
-
-async def close_session():
-    global _session
-    if _session and not _session.closed:
-        await _session.close()
-    _session = None
-
 
 async def _respect_rate_limit():
     """
@@ -129,7 +140,7 @@ async def fetch_valorant_rank(riot_id: str) -> Tuple[str, str]:
         if now - ts < _RANK_CACHE_TTL:
             return cached_rank, cached_region
 
-    session = await _get_session()
+    session = await get_http_session()
 
     region = VALORANT_DEFAULT_REGION
     url = f"{HENRIKDEV_BASE_URL}/valorant/v2/mmr/{region}/{quote(name)}/{quote(tag)}"

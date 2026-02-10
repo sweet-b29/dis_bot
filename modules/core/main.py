@@ -87,7 +87,6 @@ async def setup_hook():
 
     timeout = aiohttp.ClientTimeout(total=10, connect=5, sock_read=10)
     bot.http_session = aiohttp.ClientSession(timeout=timeout)
-    api_client.set_http_session(bot.http_session)
 
     api_client.set_http_session(bot.http_session)
     valorant_api.set_http_session(bot.http_session)
@@ -98,6 +97,8 @@ async def setup_hook():
         try:
             if hasattr(api_client, "close_http_session"):
                 await api_client.close_http_session()
+            if hasattr(valorant_api, "close_http_session"):
+                await valorant_api.close_http_session()
             if hasattr(bot, "http_session") and bot.http_session and not bot.http_session.closed:
                 await bot.http_session.close()
         finally:
