@@ -111,7 +111,11 @@ def _extract_rank_from_v2(payload: dict) -> Optional[str]:
 
 async def fetch_valorant_rank(riot_id: str) -> Tuple[str, str]:
     """
-    Получить ранг игрока через HenrikDev.
+    Получить АКТУАЛЬНЫЙ ранг игрока через HenrikDev.
+
+    Шаги:
+    1) /valorant/v1/account/{name}/{tag} → puuid + region
+    2) /valorant/v1/by-puuid/mmr/{region}/{puuid} → текущий ранг
 
     Возвращает:
         (rank, region)
@@ -130,11 +134,11 @@ async def fetch_valorant_rank(riot_id: str) -> Tuple[str, str]:
     if not name or not tag:
         raise ValorantRankError("Riot ID должен быть в формате Name#TAG")
 
-    key = _cache_key(riot_id)
+    cache_key = _cache_key(riot_id)
     now = time.time()
 
-    # --- кеш ---
-    cached = _rank_cache.get(key)
+    # --- кеш по Riot ID ---
+    cached = _rank_cache.get(cache_key)
     if cached:
         ts, cached_rank, cached_region = cached
         if now - ts < _RANK_CACHE_TTL:
@@ -142,17 +146,17 @@ async def fetch_valorant_rank(riot_id: str) -> Tuple[str, str]:
 
     session = await get_http_session()
 
-    region = VALORANT_DEFAULT_REGION
-    url = f"{HENRIKDEV_BASE_URL}/valorant/v2/mmr/{region}/{quote(name)}/{quote(tag)}"
     headers = {
         "Authorization": HENRIKDEV_API_KEY,
         "Accept": "application/json",
     }
 
-    await _respect_rate_limit()
-
     try:
-        async with session.get(url, headers=headers) as resp:
+        # ---------- 1. Получаем puuid и регион ----------
+        account_url = f"{HENRIKDEV_BASE_URL}/valorant/v1/account/{quote(name)}/{quote(tag)}"
+
+        await _respect_rate_limit()
+        async with session.get(account_url, headers=headers) as resp:
             status = resp.status
             try:
                 payload = await resp.json()
@@ -161,48 +165,94 @@ async def fetch_valorant_rank(riot_id: str) -> Tuple[str, str]:
 
             api_status = payload.get("status")
 
-            # --- разбор статус-кодов ---
             if status == 429 or api_status == 429:
-                # Лимит — надо остановить внешний цикл
                 raise ValorantRankError("Лимит запросов к HenrikDev (429)", status=429)
 
             if status == 404 or api_status == 404:
                 raise ValorantRankError("Игрок не найден в HenrikDev (404)", status=404)
 
-            if status >= 500 or api_status and api_status >= 500:
+            if status >= 500 or (api_status and api_status >= 500):
                 raise ValorantRankError("HenrikDev / Riot временно недоступен", status=status)
 
             if status != 200 or (api_status not in (None, 200)):
-                raise ValorantRankError(f"Неожиданный ответ HenrikDev: HTTP {status}, status={api_status}", status=status)
+                raise ValorantRankError(
+                    f"Неожиданный ответ HenrikDev (account): HTTP {status}, status={api_status}",
+                    status=status,
+                )
 
-            # --- парсим ранг ---
+            data = payload.get("data") or {}
+            puuid = data.get("puuid")
+            region = (data.get("region") or VALORANT_DEFAULT_REGION).lower()
+
+            if not puuid:
+                raise ValorantRankError("Не удалось получить puuid игрока из HenrikDev", status=status)
+
+        # ---------- 2. Получаем mmr по puuid ----------
+        mmr_url = f"{HENRIKDEV_BASE_URL}/valorant/v1/by-puuid/mmr/{region}/{quote(puuid)}"
+
+        await _respect_rate_limit()
+        async with session.get(mmr_url, headers=headers) as resp:
+            status = resp.status
+            try:
+                payload = await resp.json()
+            except Exception:
+                payload = {}
+
+            api_status = payload.get("status")
+
+            if status == 429 or api_status == 429:
+                raise ValorantRankError("Лимит запросов к HenrikDev (429)", status=429)
+
+            if status == 404 or api_status == 404:
+                # Аккаунт есть, но рейтинга нет → считаем Unranked
+                rank = "Unranked"
+                _rank_cache[cache_key] = (now, rank, region)
+                logger.info(f"[HenrikDev] {riot_id} -> {rank} (region={region}) [mmr 404]")
+                return rank, region
+
+            if status >= 500 or (api_status and api_status >= 500):
+                raise ValorantRankError("HenrikDev / Riot временно недоступен (mmr)", status=status)
+
+            if status != 200 or (api_status not in (None, 200)):
+                raise ValorantRankError(
+                    f"Неожиданный ответ HenrikDev (mmr): HTTP {status}, status={api_status}",
+                    status=status,
+                )
+
             data = payload.get("data") or {}
 
-            # --- ТОЛЬКО текущий ранг (АКТУАЛЬНЫЙ) ---
-            data = payload.get("data") or {}
+            # --- ПРИОРИТЕТ: текущий ранг за акт ---
+            # v3-схема: data.current.tier.name
+            rank_raw: Optional[str] = None
 
-            # v3 current
             current_v3 = data.get("current") or {}
             current_tier_v3 = current_v3.get("tier") or {}
             rank_raw = current_tier_v3.get("name")
 
-            # fallback v2 current (на случай старого ответа API)
+            # fallback: v2-схема через current_data
             if not rank_raw:
                 current_v2 = data.get("current_data") or {}
-                rank_raw = current_v2.get("currenttier_patched")
+                rank_raw = (
+                    current_v2.get("currenttier_patched")
+                    or current_v2.get("currenttierpatched")
+                )
 
-            # ❌ ВАЖНО:
-            # ❌ НЕ используем peak
-            # ❌ НЕ используем highest_rank
-            # ❌ если current пустой → считаем Unranked
+            # fallback: иногда патчат без current_data
+            if not rank_raw:
+                rank_raw = (
+                    data.get("currenttier_patched")
+                    or data.get("currenttierpatched")
+                )
 
+            # если так и не нашли — это реально Unranked
             rank = _normalize_rank(rank_raw)
 
             logger.info(f"[HenrikDev] {riot_id} -> {rank} (region={region})")
 
-            _rank_cache[key] = (now, rank, region)
+            _rank_cache[cache_key] = (now, rank, region)
             return rank, region
 
     except aiohttp.ClientError as e:
         logger.error(f"[HenrikDev] network error for {riot_id}: {e}")
         raise ValorantRankError("Сетевая ошибка при запросе к HenrikDev") from e
+
