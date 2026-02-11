@@ -4,8 +4,8 @@ from discord.ext import commands
 
 from modules.utils import api_client
 from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
-from modules.commands.profile_setup import riot_id_is_valid
-from modules.utils.profiles_cache import profiles_cache
+from modules.utils.rank_sync import riot_id_is_valid
+#from modules.utils.profiles_cache import profiles_cache
 
 
 # === Rank options (ВАЖНО: Select <= 25 опций, поэтому делим на 2 меню) ===
@@ -165,11 +165,11 @@ class EditProfileModal(discord.ui.Modal, title="Обновить Riot ID и ра
             return
 
         # на всякий случай сбросим кэш профиля
-        try:
-            await profiles_cache.invalidate(interaction.user.id)
-        except Exception:
+        #try:
+        #    await profiles_cache.invalidate(interaction.user.id)
+        #except Exception:
             # кэш — не критично, молча игнорируем
-            pass
+        #    pass
 
         await interaction.followup.send(
             f"✅ Профиль обновлён.\n"
