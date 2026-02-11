@@ -69,34 +69,39 @@ class JoinLobbyButton(View):
 
     @discord.ui.button(label="Присоединиться к лобби", style=discord.ButtonStyle.success)
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Сразу подтверждаем интеракцию, чтобы Discord не вернул "Unknown interaction"
+        # если загрузка профиля/ранга займёт больше ~3 секунд.
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except discord.InteractionResponded:
+            pass
+
         # Берём профиль из кэша (внутри ensure_fresh_rank → Django + HenrikDev)
         try:
-            profile = await asyncio.wait_for(profiles_cache.get(interaction.user.id), timeout=2.0)
-        except asyncio.TimeoutError:
-            logger.warning(
-                f"⚠ join_button timeout while loading profile for {interaction.user.id}"
+            profile = await profiles_cache.get(interaction.user.id)
+        except Exception as e:
+            logger.warning(f"⚠ join_button failed while loading profile for {interaction.user.id}: {e}")
+            await interaction.followup.send(
+                "⚠ Сервис профилей временно недоступен. Попробуйте ещё раз через пару секунд.",
+                ephemeral=True,
             )
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    "⚠ Сервис профилей временно недоступен. Попробуйте ещё раз через пару секунд.",
-                    ephemeral=True,
-                )
-            else:
-                await interaction.followup.send(
-                    "⚠ Сервис профилей временно недоступен. Попробуйте ещё раз через пару секунд.",
-                    ephemeral=True,
-                )
             return
 
         # 1) Профиля нет или не заполнен Riot ID → ОДИН раз показываем модалку
         username = (profile or {}).get("username") if profile else ""
         if not (username or "").strip():
-            await interaction.response.send_modal(PlayerProfileModal(interaction, lobby=self.lobby))
+            await interaction.followup.send(
+                "⚠ У вас не заполнен Riot ID. Используйте /profile, чтобы указать его в формате Name#TAG.",
+                ephemeral=True,
+            )
             return
 
         # 2) Кривой формат Riot ID (нет # и т.п.) → даём пользователю поправить
         if not riot_id_is_valid(username):
-            await interaction.response.send_modal(PlayerProfileModal(interaction, lobby=self.lobby))
+            await interaction.followup.send(
+                "⚠ Riot ID указан в неверном формате. Используйте /profile и введите Name#TAG.",
+                ephemeral=True,
+            )
             return
 
         # 3) Пустой ранг — считаем его Unranked, но не мучаем модалкой
@@ -114,11 +119,6 @@ class JoinLobbyButton(View):
                 logger.warning(f"Не удалось автоматически выставить Unranked для {interaction.user.id}: {e}")
 
         # 4) Дальше — твоя текущая логика проверки бана и добавления в лобби
-        try:
-            await interaction.response.defer(ephemeral=True)
-        except discord.InteractionResponded:
-            pass  # если уже ответили (редкий случай)
-
         ban = await is_banned(interaction.user.id)
         if ban.get("banned"):
             text = render_ban_message(
