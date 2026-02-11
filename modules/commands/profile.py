@@ -4,6 +4,8 @@ from discord.ext import commands
 
 from modules.utils import api_client
 from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
+from modules.commands.profile_setup import riot_id_is_valid
+from modules.utils.profiles_cache import profiles_cache
 
 
 # === Rank options (ВАЖНО: Select <= 25 опций, поэтому делим на 2 меню) ===
@@ -95,73 +97,84 @@ class RankSelectView(discord.ui.View):
         await self._save(interaction, select.values[0])
 
 
-class EditProfileModal(discord.ui.Modal, title="Профиль игрока"):
+class EditProfileModal(discord.ui.Modal, title="Обновить Riot ID и ранг"):
     riot_id = discord.ui.TextInput(
         label="Riot ID (Name#TAG)",
         placeholder="Например: Yuriy#KZ1",
-        required=True,
         max_length=32,
+        required=True,
     )
 
-    def __init__(self, *, owner_id: int, default_riot_id: str | None = None):
+    def __init__(self, *, user_id: int | None = None, default_riot_id: str | None = None):
         super().__init__(timeout=300)
-        self.owner_id = owner_id
+        self.user_id = user_id
+
+        # если в БД уже есть Riot ID — покажем его по умолчанию
         if default_riot_id:
             self.riot_id.default = default_riot_id
 
+
     async def on_submit(self, interaction: discord.Interaction):
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("❌ Это окно не для тебя.", ephemeral=True)
+        # защитимся от использования модалки другим пользователем
+        if self.user_id is not None and interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "❌ Это окно не для тебя.", ephemeral=True
+            )
             return
 
-        await interaction.response.defer(ephemeral=True)
+        # сразу дефёрим, дальше работаем через followup
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
         riot_id_value = self.riot_id.value.strip()
-        if not _riot_id_ok(riot_id_value):
-            await interaction.followup.send("❌ Укажи Riot ID строго в формате `Name#TAG`.", ephemeral=True)
-            return
 
-        # 1) Пробуем автоматически получить ранг
-        try:
-            rank, region_used = await fetch_valorant_rank(riot_id_value, force=True)
-        except ValorantRankError as e:
-            # Сохраняем хотя бы Riot ID и даём выбрать ранг вручную
-            try:
-                await api_client.update_player_profile(
-                    interaction.user.id,
-                    username=riot_id_value,
-                    create_if_not_exist=True
-                )
-            except Exception:
-                await interaction.followup.send("❌ Ошибка при сохранении Riot ID.", ephemeral=True)
-                return
-
+        # базовая проверка формата Riot ID
+        if not riot_id_is_valid(riot_id_value):
             await interaction.followup.send(
-                f"⚠ Не удалось получить ранг автоматически: {e}\nВыбери ранг вручную:",
-                view=RankSelectView(interaction.user.id, riot_id_value),
+                "❌ Укажи Riot ID строго в формате `Name#TAG`.",
                 ephemeral=True,
             )
             return
 
-        # 2) Автоуспех — сохраняем username+rank
+        # пробуем получить актуальный ранг из Valorant API
+        # по умолчанию считаем Unranked, если что-то пойдёт не так
+        rank = "Unranked"
+        region_used = "—"
+
+        try:
+            rank, region_used = await fetch_valorant_rank(riot_id_value)
+        except (ValorantRankError, Exception):
+            # Любая ошибка внешнего сервиса не должна ломать регистрацию.
+            # Оставляем rank = "Unranked", region_used = "—".
+            pass
+
+        # сохраняем профиль в Django API
         try:
             await api_client.update_player_profile(
-                interaction.user.id,
+                discord_id=interaction.user.id,
                 username=riot_id_value,
                 rank=rank,
-                create_if_not_exist=True
+                create_if_not_exist=True,
             )
         except Exception:
-            await interaction.followup.send("❌ Ошибка при сохранении профиля.", ephemeral=True)
+            await interaction.followup.send(
+                "❌ Ошибка при сохранении профиля.",
+                ephemeral=True,
+            )
             return
 
-        await interaction.followup.send(
-            f"✅ Профиль сохранён.\nRiot ID: `{riot_id_value}`\nРанг: **{rank}** (region: `{region_used}`)",
-            ephemeral=True
-        )
+        # на всякий случай сбросим кэш профиля
+        try:
+            await profiles_cache.invalidate(interaction.user.id)
+        except Exception:
+            # кэш — не критично, молча игнорируем
+            pass
 
-        # Показываем обновлённую карточку профиля отдельным сообщением
-        await send_profile_card(interaction, edit=False)
+        await interaction.followup.send(
+            f"✅ Профиль обновлён.\n"
+            f"Riot ID: `{riot_id_value}`\n"
+            f"Ранг: **{rank}** (region: `{region_used}`)",
+            ephemeral=True,
+        )
 
 
 class ProfileCardView(discord.ui.View):

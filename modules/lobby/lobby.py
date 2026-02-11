@@ -512,14 +512,15 @@ class PlayerProfileModal(discord.ui.Modal, title="Введите Riot ID (Name#T
             return
 
         # 3) Тянем актуальный ранг
+        # по умолчанию считаем Unranked — регистрация не должна падать из-за внешнего сервиса
+        rank = "Unranked"
+        region_used = "—"
+
         try:
-            rank, region_used = await fetch_valorant_rank(riot_id, force=True)
-        except ValorantRankError as e:
-            await interaction.followup.send(f"❌ Не удалось получить ранг: {e}", ephemeral=True)
-            return
-        except Exception:
-            await interaction.followup.send("❌ Не удалось получить ранг (внутренняя ошибка).", ephemeral=True)
-            return
+            rank, region_used = await fetch_valorant_rank(riot_id)
+        except (ValorantRankError, Exception):
+            # Любые проблемы HenrikDev игнорируем, оставляем Unranked
+            pass
 
         # 4) Сохраняем профиль
         try:
