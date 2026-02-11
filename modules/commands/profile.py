@@ -194,7 +194,7 @@ class ProfileCardView(discord.ui.View):
             pass
 
         await interaction.response.send_modal(
-            EditProfileModal(owner_id=interaction.user.id, default_riot_id=default_riot)
+            EditProfileModal(user_id=interaction.user.id, default_riot_id=default_riot)
         )
 
 

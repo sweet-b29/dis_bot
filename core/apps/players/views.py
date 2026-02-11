@@ -70,76 +70,75 @@ class PlayerViewSet(viewsets.ModelViewSet):
         except Player.DoesNotExist:
             return Response({'error': 'Player not found'}, status=status.HTTP_404_NOT_FOUND)
 
-    @action(detail=False, methods=['patch'], url_path='update_profile')
+    @action(detail=False, methods=["PATCH"], url_path="update_profile")
     def update_profile(self, request):
-        data = request.data
-        discord_id = data.get("discord_id")
-        username = data.get("username", None)
-        rank = data.get("rank", None)
-        create_if_not_exist = data.get("create_if_not_exist", False)
+        """
+        PATCH /players/update_profile/
 
-        logger.warning(f"📥 PATCH /players/update_profile/ получен с данными: {data}")
+        Тело:
+        {
+          "discord_id": 1234567890,
+          "username": "Nick#TAG",   # опционально
+          "rank": "Immortal 1",     # опционально
+          "create_if_not_exist": true/false  # опционально (по умолчанию False)
+        }
+        """
+        data = request.data
+
+        discord_id = data.get("discord_id")
+        username = data.get("username")
+        rank = data.get("rank")
+        create_if_not_exist = bool(data.get("create_if_not_exist", False))
 
         if not discord_id:
             return Response({"error": "discord_id is required"}, status=400)
+
         if username is None and rank is None:
-            return Response({"error": "nothing to update (provide username or rank)"}, status=400)
+            return Response(
+                {"error": "nothing to update (provide username or rank)"},
+                status=400,
+            )
 
-            # Ищем/создаём игрока безопасно для конкурентных запросов
-            create_allowed = str(create_if_not_exist).lower() in ("true", "1", "yes")
-            player = Player.objects.filter(discord_id=discord_id).first()
-            created = False
+        # Ищем или создаём игрока
+        player = Player.objects.filter(discord_id=discord_id).first()
+        created = False
 
-            if not player:
-                if not create_allowed:
-                    return Response({"error": "Player not found"}, status=404)
-                if not username:
-                    return Response({"error": "username required to create a profile"}, status=400)
-
-                defaults = {
-                    "username": str(username).strip(),
-                    "rank": (str(rank).strip() if rank else (Player._meta.get_field("rank").default or "Unranked")),
-                    "rank_last_sync": timezone.now() if rank else None,
-                }
-                player, created = Player.objects.get_or_create(
-                    discord_id=discord_id,
-                    defaults=defaults,
+        if not player:
+            if not create_if_not_exist:
+                return Response(
+                    {"error": "player not found and create_if_not_exist is False"},
+                    status=404,
                 )
+            player = Player(discord_id=discord_id)
+            created = True
 
-        # частичное обновление
+        # Если пришёл username — обновляем и сбрасываем статистику по имени
         if username is not None:
-            username = str(username).strip()
-            if not (1 <= len(username) <= 32):
-                return Response({"error": "username must be 1..32 chars"}, status=400)
+            username = username.strip()
+            if len(username) > 64:
+                return Response({"error": "username too long"}, status=400)
 
-            # фикс времени смены ника — только если реально изменился
             if player.username != username:
                 player.username = username
-                if hasattr(player, "last_name_change"):
-                    player.last_name_change = timezone.now()
+                player.last_name_change = None  # можно потом реализовать логику отсечки по времени
 
+        # Если пришёл rank — просто обновляем + обновляем время sync
         if rank is not None:
-            rank = str(rank).strip()
-            if not (1 <= len(rank) <= 50):
-                return Response({"error": "rank must be 1..50 chars"}, status=400)
-            player.rank = rank
-            player.rank_last_sync = timezone.now()
+            rank = rank.strip()
+            if len(rank) > 64:
+                return Response({"error": "rank too long"}, status=400)
 
-            if hasattr(player, "rank_last_sync"):
-                player.rank_last_sync = timezone.now()
+            player.rank = rank
+            player.rank_last_sync = None  # время синка проставит фон/бот при следующем запросе
 
         try:
             player.save()
-            if created:
-                logger.success(f"✅ Создан новый игрок: {player.discord_id} - {player.username} ({player.rank})")
-            else:
-                logger.info(f"✏ Обновлён профиль игрока: {player.discord_id} - {player.username} ({player.rank})")
         except Exception as e:
-            logger.error(f"❌ Ошибка при сохранении игрока {discord_id}: {e}")
-            return Response({"error": "save failed"}, status=500)
+            return Response({"error": str(e)}, status=500)
 
-        serializer = self.get_serializer(player)
-        return Response(serializer.data, status=201 if created else 200)
+        serializer = PlayerSerializer(player)
+        status_code = 201 if created else 200
+        return Response(serializer.data, status=status_code)
 
     @action(
         detail=False,
