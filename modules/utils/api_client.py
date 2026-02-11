@@ -1,4 +1,5 @@
-import aiohttp, asyncio, time
+import aiohttp
+import asyncio
 import os
 from loguru import logger
 import json
@@ -80,7 +81,6 @@ def ensure_api_config():
     if not DJANGO_API_TOKEN:
         missing.append("DJANGO_API_TOKEN")
     if missing:
-        from loguru import logger
         raise RuntimeError(f"ENV ошибки: отсутствуют {', '.join(missing)}. "
                            f"Проверь .env и перезапусти бота.")
 
@@ -183,7 +183,7 @@ async def update_lobby(lobby_id: int, data: dict):
             return {}
         try:
             return await _safe_json(resp)
-        except:
+        except Exception:
             return {}
 
 # --- Bans ---

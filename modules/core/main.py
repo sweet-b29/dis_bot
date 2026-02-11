@@ -14,7 +14,6 @@ import aiohttp
 from modules.utils import api_client
 from modules.utils import valorant_api
 from discord import InteractionResponded, HTTPException
-from discord.errors import HTTPException
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
