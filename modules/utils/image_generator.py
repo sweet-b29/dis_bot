@@ -1,10 +1,8 @@
-import discord
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 from functools import lru_cache
 import re
 from io import BytesIO
-from PIL import ImageFilter
 
 
 # Пути к файлам
@@ -460,8 +458,6 @@ def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], cu
     order_font = get_font(20)
 
     banned_set = {m for m in banned_maps}
-    available_set = {m for m in available_maps}
-
     def apply_bottom_gradient(tile_rgba: Image.Image, max_alpha: int = 190, start_frac: float = 0.58) -> Image.Image:
         """Чёрный градиент снизу для читабельности названия."""
         w, h = tile_rgba.size
@@ -478,7 +474,7 @@ def generate_map_ban_image(available_maps: list[str], banned_maps: list[str], cu
 
     def draw_badge(x: int, y: int, text: str, fill=(220, 60, 60, 220)):
         """Бейдж в левом верхнем углу."""
-        pad_x, pad_y = 10, 6
+        pad_x = 10
         tw = draw.textlength(text, font=badge_font)
         bx1, by1 = x + 10, y + 10
         bx2, by2 = int(bx1 + tw + pad_x * 2), by1 + 34
@@ -896,8 +892,6 @@ def generate_profile_card(
     big = str(wins)
     bw = draw.textlength(big, font=value_font_big)
     _draw_text(draw, (icx - int(bw) // 2, right_y2 - 125), big, value_font_big, fill="white", stroke=4)
-    bw = draw.textlength(big, font=big_font)
-    _draw_text(draw, (icx - int(bw)//2, right_y2 - 115), big, big_font, fill="white", stroke=4)
 
     img.save(out_path)
     return out_path

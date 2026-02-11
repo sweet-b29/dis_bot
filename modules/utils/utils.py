@@ -45,9 +45,12 @@ def humanize_timedelta(td: timedelta) -> str:
     h, rem = divmod(rem, 3600)
     m, _ = divmod(rem, 60)
     parts = []
-    if d: parts.append(f"{d}д")
-    if h: parts.append(f"{h}ч")
-    if m or not parts: parts.append(f"{m}м")
+    if d:
+        parts.append(f"{d}д")
+    if h:
+        parts.append(f"{h}ч")
+    if m or not parts:
+        parts.append(f"{m}м")
     return " ".join(parts)
 
 def render_ban_message(expires_at_iso: str, reason: str | None = None) -> str:

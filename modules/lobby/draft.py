@@ -1,7 +1,7 @@
 import asyncio
 import discord
 from loguru import logger
-from discord import File, Embed
+from discord import File
 from modules.utils import api_client
 from modules.utils.api_client import get_leaderboard_top
 from modules.utils.image_generator import generate_draft_image, generate_map_ban_image, generate_final_match_image
@@ -208,10 +208,12 @@ class Draft:
             team_1_ids, team_2_ids = [], []
             for m in self.teams[self.captains[0]]:
                 pid = await require_id(m)
-                if pid: team_1_ids.append(pid)
+                if pid:
+                    team_1_ids.append(pid)
             for m in self.teams[self.captains[1]]:
                 pid = await require_id(m)
-                if pid: team_2_ids.append(pid)
+                if pid:
+                    team_2_ids.append(pid)
 
             # Если кого-то нет — выходим
             if not captain_1_id or not captain_2_id or \
@@ -246,8 +248,6 @@ class Draft:
     async def send_map_embed(self):
         # Определяем, какая команда играет атаку
         cap1_side = self.team_sides.get(self.captains[0].id)
-        cap2_side = self.team_sides.get(self.captains[1].id)
-
         if cap1_side == "Атака":
             attack_team_members = [self.captains[0]] + self.teams[self.captains[0]]
             defense_team_members = [self.captains[1]] + self.teams[self.captains[1]]

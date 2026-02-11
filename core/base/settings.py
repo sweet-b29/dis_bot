@@ -13,9 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import dj_database_url
 from pathlib import Path
 from decouple import config
-import os
 
-from decouple import config
 
 # ⚠️ В проде ОБЯЗАТЕЛЬНО задать SECRET_KEY в переменных окружения.
 # Здесь дефолт только для локальной разработки.
@@ -97,9 +95,6 @@ WSGI_APPLICATION = 'deploy.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-
-from decouple import config
-import dj_database_url
 
 DB_URL = config("DATABASE_URL", default="sqlite:///db.sqlite3")
 DB_CONN_MAX_AGE = config("DB_CONN_MAX_AGE", default=600, cast=int)
@@ -193,4 +188,3 @@ SOCIALACCOUNT_PROVIDERS = {
         "SCOPE": ["identify", "email"],
     }
 }
-

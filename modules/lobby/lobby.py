@@ -5,13 +5,13 @@ import random
 from modules.utils import api_client
 from modules.lobby.draft import Draft
 from loguru import logger
-import asyncio, time
+import asyncio
+import time
 import os
 from modules.utils.image_generator import generate_lobby_image
 from modules.utils.api_client import is_banned, get_leaderboard_top
-from modules.utils.utils import create_discord_file, render_ban_message
+from modules.utils.utils import render_ban_message
 from modules.utils.rank_sync import riot_id_is_valid
-from modules.utils import api_client
 from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
 
 from modules.utils.rank_sync import ensure_fresh_rank
@@ -256,7 +256,7 @@ class Lobby:
 
             self.view = JoinLobbyButton(self)
             self.message = await self.channel.send(
-                f"Нажмите на кнопку ниже, чтобы присоединиться к лобби.\n",
+                "Нажмите на кнопку ниже, чтобы присоединиться к лобби.\n",
                 view=self.view
             )
 

@@ -9,7 +9,6 @@ from discord.ext import commands
 from modules.utils.rank_sync import ensure_fresh_rank
 from modules.utils import api_client
 
-from loguru import logger
 
 from modules.utils.valorant_api import ValorantRankError
 
@@ -151,7 +150,7 @@ class Admin(commands.Cog):
                 errors += 1
                 continue
 
-            except Exception as e:
+            except Exception:
                 errors += 1
                 continue
 
