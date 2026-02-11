@@ -1,4 +1,5 @@
 import os
+import time
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -12,6 +13,7 @@ import aiohttp
 from modules.utils import api_client
 from modules.utils import valorant_api
 from discord import InteractionResponded, HTTPException
+from discord.errors import HTTPException
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
 
@@ -161,4 +163,16 @@ if __name__ == "__main__":
     ensure_api_config()
     ensure_bot_env()
     logging.getLogger("discord.gateway").setLevel(logging.WARNING)
-    bot.run(TOKEN)
+
+    while True:
+        try:
+            bot.run(TOKEN)
+            break  # если успешно запустился и корректно завершился – выходим из цикла
+        except HTTPException as e:
+            # Если это именно 429 на логине – ждём и пробуем ещё раз
+            if getattr(e, "status", None) == 429:
+                logger.error("⚠ Discord вернул 429 Too Many Requests при логине. Ждём 60 секунд и пробуем снова.")
+                time.sleep(60)
+                continue
+            # Любая другая ошибка – пусть падает, чтобы мы увидели реальную проблему
+            raise
