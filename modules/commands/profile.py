@@ -1,6 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+import asyncio
 
 from modules.utils import api_client
 from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
@@ -188,9 +189,12 @@ class ProfileCardView(discord.ui.View):
         # Подставим сохранённый Riot ID, если он есть
         default_riot = None
         try:
-            profile = await api_client.get_player_profile(interaction.user.id)
+            profile = await asyncio.wait_for(
+                api_client.get_player_profile(interaction.user.id),
+                timeout=2.0,
+            )
             default_riot = (profile or {}).get("username")
-        except Exception:
+        except (asyncio.TimeoutError, Exception):
             pass
 
         await interaction.response.send_modal(
@@ -200,6 +204,11 @@ class ProfileCardView(discord.ui.View):
 
 async def send_profile_card(interaction: discord.Interaction, edit: bool = False):
     discord_id = interaction.user.id
+
+    if not edit and not interaction.response.is_done():
+        # Подтверждаем interaction сразу, чтобы не словить Unknown interaction
+        # при медленном ответе внешнего API.
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
     try:
         profile = await api_client.get_player_profile(discord_id)

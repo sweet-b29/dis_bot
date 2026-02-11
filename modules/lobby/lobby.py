@@ -70,7 +70,23 @@ class JoinLobbyButton(View):
     @discord.ui.button(label="Присоединиться к лобби", style=discord.ButtonStyle.success)
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Берём профиль из кэша (внутри ensure_fresh_rank → Django + HenrikDev)
-        profile = await profiles_cache.get(interaction.user.id)
+        try:
+            profile = await asyncio.wait_for(profiles_cache.get(interaction.user.id), timeout=2.0)
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"⚠ join_button timeout while loading profile for {interaction.user.id}"
+            )
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "⚠ Сервис профилей временно недоступен. Попробуйте ещё раз через пару секунд.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    "⚠ Сервис профилей временно недоступен. Попробуйте ещё раз через пару секунд.",
+                    ephemeral=True,
+                )
+            return
 
         # 1) Профиля нет или не заполнен Riot ID → ОДИН раз показываем модалку
         username = (profile or {}).get("username") if profile else ""
