@@ -36,8 +36,8 @@ def _riot_id_ok(value: str) -> bool:
 
 class RankSelectView(discord.ui.View):
     """
-    Ручной выбор ранга (fallback), если Valorant API не дал данные.
     Сохраняет (username, rank) в БД.
+    Если передан after_save — вызовет его после сохранения (например, чтобы автоматически присоединить к лобби).
     """
     def __init__(self, owner_id: int, riot_id: str, after_save=None):
         super().__init__(timeout=120)
@@ -72,10 +72,12 @@ class RankSelectView(discord.ui.View):
             view=self
         )
 
+        # после сохранения — внешний хук (например автодобавление в лобби)
         if self.after_save:
             try:
                 await self.after_save(interaction, rank)
             except Exception:
+                # здесь не роняем процесс, просто тихо игнорируем
                 pass
 
     @discord.ui.select(
