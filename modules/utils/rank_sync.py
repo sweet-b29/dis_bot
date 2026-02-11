@@ -56,6 +56,7 @@ async def ensure_fresh_rank(
     force: bool = False,
     allow_unranked_overwrite: bool = False,
     return_updated_only: bool = False,
+    raise_on_fetch_error: bool = False,
 ):
     """
     Обновить ранг игрока через HenrikDev.
@@ -106,8 +107,11 @@ async def ensure_fresh_rank(
         logger.warning(
             f"[rank_sync] HenrikDev error for {discord_id} ({riot_id}): {e} (status={getattr(e, 'status', None)})"
         )
-        # наружу бросаем дальше, чтобы /syncallranks мог остановиться на 429
-        raise
+        # В обычных пользовательских сценариях не роняем поток из-за внешнего API.
+        # Для админского /syncallranks можно включить явный проброс ошибки.
+        if raise_on_fetch_error:
+            raise
+        return None if return_updated_only else profile
 
     new_rank = (new_rank or "Unranked").strip()
 

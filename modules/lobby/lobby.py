@@ -40,11 +40,25 @@ class ProfilesCache:
             ts, data = self._store.get(discord_id, (0, {}))
             if now - ts < self.ttl:
                 return data
+
         # вне локов — сетевой запрос
-        data = await ensure_fresh_rank(discord_id)
+        data: dict | None = None
+        try:
+            data = await ensure_fresh_rank(discord_id)
+        except Exception as e:
+            logger.warning(f"⚠ ensure_fresh_rank failed for {discord_id}: {e}")
+
+        # fallback: если внешний API упал, пробуем взять профиль напрямую из Django
+        if not data:
+            try:
+                data = await api_client.get_player_profile(discord_id)
+            except Exception as e:
+                logger.warning(f"⚠ get_player_profile fallback failed for {discord_id}: {e}")
+                data = {}
+
         async with self._lock:
-            self._store[discord_id] = (now, data)
-        return data
+            self._store[discord_id] = (now, data or {})
+            return data or {}
 
 profiles_cache = ProfilesCache(ttl=60.0)
 

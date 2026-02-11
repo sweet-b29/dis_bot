@@ -130,6 +130,7 @@ class Admin(commands.Cog):
                     force=True,
                     allow_unranked_overwrite=True,
                     return_updated_only=True,
+                    raise_on_fetch_error=True,
                 )
                 if changed:
                     updated += 1

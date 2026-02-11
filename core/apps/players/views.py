@@ -85,24 +85,26 @@ class PlayerViewSet(viewsets.ModelViewSet):
         if username is None and rank is None:
             return Response({"error": "nothing to update (provide username or rank)"}, status=400)
 
-        # пробуем найти игрока
-        try:
-            player = Player.objects.get(discord_id=discord_id)
+            # Ищем/создаём игрока безопасно для конкурентных запросов
+            create_allowed = str(create_if_not_exist).lower() in ("true", "1", "yes")
+            player = Player.objects.filter(discord_id=discord_id).first()
             created = False
-        except Player.DoesNotExist:
-            # создаём только если разрешено и есть username
-            if str(create_if_not_exist).lower() in ("true", "1", "yes"):
+
+            if not player:
+                if not create_allowed:
+                    return Response({"error": "Player not found"}, status=404)
                 if not username:
                     return Response({"error": "username required to create a profile"}, status=400)
-                player = Player.objects.create(
+
+                defaults = {
+                    "username": str(username).strip(),
+                    "rank": (str(rank).strip() if rank else (Player._meta.get_field("rank").default or "Unranked")),
+                    "rank_last_sync": timezone.now() if rank else None,
+                }
+                player, created = Player.objects.get_or_create(
                     discord_id=discord_id,
-                    username=str(username).strip(),
-                    rank=(str(rank).strip() if rank else (Player._meta.get_field("rank").default or "Unranked")),
-                    rank_last_sync=timezone.now() if rank else None,
+                    defaults=defaults,
                 )
-                created = True
-            else:
-                return Response({"error": "Player not found"}, status=404)
 
         # частичное обновление
         if username is not None:
