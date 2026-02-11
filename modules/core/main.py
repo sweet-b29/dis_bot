@@ -1,5 +1,6 @@
 import os
 import time
+import sys
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -164,15 +165,15 @@ if __name__ == "__main__":
     ensure_bot_env()
     logging.getLogger("discord.gateway").setLevel(logging.WARNING)
 
-    while True:
-        try:
-            bot.run(TOKEN)
-            break  # если успешно запустился и корректно завершился – выходим из цикла
-        except HTTPException as e:
-            # Если это именно 429 на логине – ждём и пробуем ещё раз
-            if getattr(e, "status", None) == 429:
-                logger.error("⚠ Discord вернул 429 Too Many Requests при логине. Ждём 60 секунд и пробуем снова.")
-                time.sleep(60)
-                continue
-            # Любая другая ошибка – пусть падает, чтобы мы увидели реальную проблему
-            raise
+    try:
+        bot.run(TOKEN)
+    except HTTPException as e:
+        # Если это именно 429 на логине — не переиспользуем текущий объект бота,
+        # а перезапускаем процесс, чтобы подняться с «чистой» Discord session.
+        if getattr(e, "status", None) == 429:
+            logger.error("⚠ Discord вернул 429 Too Many Requests при логине. Ждём 60 секунд и перезапускаем процесс.")
+            time.sleep(60)
+            os.execv(sys.executable, [sys.executable, "-m", "modules.core.main"])
+
+        # Любая другая ошибка – пусть падает, чтобы мы увидели реальную проблему
+        raise
