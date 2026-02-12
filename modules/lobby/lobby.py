@@ -23,6 +23,20 @@ LOBBY_COUNTERS = {
     "5x5": 0
 }
 
+PRIZES_TEXT = (
+    "Призы:\n"
+    " 1️⃣ место <a:arrow:1388296844009930893> 50 $ + роль \n"
+    "2️⃣ место <a:arrow:1388296844009930893>** 40 $ + роль** \n"
+    "3️⃣ место <a:arrow:1388296844009930893>** 30 $ + роль** \n"
+    "4️⃣ место <a:arrow:1388296844009930893> 25 $ \n"
+    "5️⃣ место <a:arrow:1388296844009930893> 20 $ \n"
+    "6️⃣ место <a:arrow:1388296844009930893> 14 $ \n\n"
+    "ДОПОЛНИТЕЛЬНЫЕ КАТЕГОРИИ \n\n"
+    "<a:AnimeShooting:1320781753249435760> Лучший хайлайт <a:arrow:1388296844009930893> 12 $ \n"
+    "<a:GamerRage:1320781742876921917>  Самый смешной момент <a:arrow:1388296844009930893> 12 $ \n"
+    "<a:02yaygifemoji:1331568478808969246> Душа компании <a:arrow:1388296844009930893> 12 $"
+)
+
 class ProfilesCache:
     def __init__(self, ttl: float = 60.0):
         self.ttl = ttl
@@ -483,6 +497,7 @@ class LobbyMenuView(View):
         self.add_item(LobbySizeButton(label="4x4", size=4, bot=bot))
         self.add_item(LobbySizeButton(label="5x5", size=5, bot=bot))
         self.add_item(ProfileButton())
+        self.add_item(PrizesButton())
 
 class LobbySizeButton(discord.ui.Button):
     def __init__(self, label, size, bot):
@@ -504,6 +519,18 @@ class ProfileButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         from modules.commands.profile import send_profile_card
         await send_profile_card(interaction, edit=False)
+
+class PrizesButton(discord.ui.Button):
+    def __init__(self):
+        # primary = самый заметный (blurple). "Жёлтого" нет.
+        super().__init__(label="Призы", style=discord.ButtonStyle.primary, emoji="🏆")
+
+    async def callback(self, interaction: discord.Interaction):
+        # показываем ТОЛЬКО нажавшему
+        if not interaction.response.is_done():
+            await interaction.response.send_message(PRIZES_TEXT, ephemeral=True)
+        else:
+            await interaction.followup.send(PRIZES_TEXT, ephemeral=True)
 
 
 class PlayerProfileModal(discord.ui.Modal, title="Введите Riot ID (Name#TAG)"):

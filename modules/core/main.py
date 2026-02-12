@@ -67,12 +67,6 @@ async def on_voice_state_update(member, before, after):
 async def setup_hook():
     GUILD_ID = int(os.getenv("GUILD_ID"))
 
-    class MyBot(commands.Bot):
-        async def setup_hook(self):
-            guild = discord.Object(id=GUILD_ID)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-
     # Загрузка всех команд из modules/commands/*
     base_dir = Path(__file__).resolve().parents[2]
     commands_dir = base_dir / "modules" / "commands"
@@ -108,20 +102,10 @@ async def setup_hook():
 
     bot.close = _close_with_http
 
-    # Синхронизация команд только в guild + очистка глобальных,
-    # чтобы в клиенте Discord не было дубликатов команд.
+    # Синхронизация slash-команд в конкретную гильдию (быстро появляется в Discord)
     try:
         guild = discord.Object(id=GUILD_ID)
-
-        # 1) удаляем глобальные команды (они часто дублируют guild-команды в интерфейсе)
-        bot.tree.clear_commands(guild=None)
-        await bot.tree.sync()
-
-        # 2) полностью пересобираем guild-набор из актуальных команд кода
-        bot.tree.clear_commands(guild=guild)
-        bot.tree.copy_global_to(guild=guild)
         synced = await bot.tree.sync(guild=guild)
-
         logger.success(f"✅ Slash-команды синхронизированы в guild={GUILD_ID}. Всего: {len(synced)}")
     except Exception as e:
         logger.error(f"❌ Ошибка синхронизации команд: {e}")

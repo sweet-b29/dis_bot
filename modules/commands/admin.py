@@ -8,23 +8,7 @@ from discord.ext import commands
 
 from modules.utils.rank_sync import ensure_fresh_rank
 from modules.utils import api_client
-
-
 from modules.utils.valorant_api import ValorantRankError
-
-PRIZES_WEBHOOK_TEXT = (
-    "Призы:\n"
-    " 1️⃣ место <a:arrow:1388296844009930893> 50 $ + роль \n"
-    "2️⃣ место <a:arrow:1388296844009930893>** 40 $ + роль** \n"
-    "3️⃣ место <a:arrow:1388296844009930893>** 30 $ + роль** \n"
-    "4️⃣ место <a:arrow:1388296844009930893> 25 $ \n"
-    "5️⃣ место <a:arrow:1388296844009930893> 20 $ \n"
-    "6️⃣ место <a:arrow:1388296844009930893> 14 $ \n\n"
-    "ДОПОЛНИТЕЛЬНЫЕ КАТЕГОРИИ \n\n"
-    "<a:AnimeShooting:1320781753249435760> Лучший хайлайт <a:arrow:1388296844009930893> 12 $ \n"
-    "<a:GamerRage:1320781742876921917>  Самый смешной момент <a:arrow:1388296844009930893> 12 $ \n"
-    "<a:02yaygifemoji:1331568478808969246> Душа компании <a:arrow:1388296844009930893> 12 $"
-)
 
 
 def _parse_role_ids(env_name: str) -> list[int]:
@@ -239,29 +223,6 @@ class Admin(commands.Cog):
         embed.add_field(name="/ban", value="Бан по discord_id на время", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="prizeswebhook", description="Отправить сообщение о призах в заданный webhook")
-    @admin_only()
-    async def prizeswebhook(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        webhook_url = os.getenv("PRIZES_WEBHOOK_URL", "").strip()
-        if not webhook_url:
-            await interaction.followup.send("❌ PRIZES_WEBHOOK_URL не задан в .env", ephemeral=True)
-            return
-
-        session = getattr(self.bot, "http_session", None)
-        if session is None or session.closed:
-            await interaction.followup.send("❌ HTTP-сессия бота не готова. Перезапусти бота.", ephemeral=True)
-            return
-
-        try:
-            webhook = discord.Webhook.from_url(webhook_url, session=session)
-            await webhook.send(content=PRIZES_WEBHOOK_TEXT, wait=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Не удалось отправить webhook: {e}", ephemeral=True)
-            return
-
-        await interaction.followup.send("✅ Сообщение о призах отправлено в webhook.", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Admin(bot))
