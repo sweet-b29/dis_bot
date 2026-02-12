@@ -166,70 +166,6 @@ class Admin(commands.Cog):
             ephemeral=True,
         )
 
-    @app_commands.command(name="changerank", description="Изменить ранг игрока (без изменения ника)")
-    @app_commands.describe(user="Участник", rank="Ранг (например: Immortal 2)")
-    @admin_only()
-    async def changerank(self, interaction: discord.Interaction, user: discord.Member, rank: str):
-        rank = rank.strip()
-        if not (1 <= len(rank) <= 32):
-            await interaction.response.send_message("❌ Ранг должен быть 1–32 символа.", ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        try:
-            # если профиля нет — создаём (иначе будет 404)
-            profile = await api_client.get_player_profile(user.id)
-            if not profile:
-                tmp_username = (user.display_name or user.name or "Player").strip()[:32]
-                await api_client.update_player_profile(
-                    discord_id=user.id,
-                    username=tmp_username,
-                    rank=rank,
-                    create_if_not_exist=True,
-                )
-            else:
-                await api_client.update_player_profile(
-                    discord_id=user.id,
-                    username=None,
-                    rank=rank,
-                    create_if_not_exist=False,
-                )
-        except Exception as e:
-            await interaction.followup.send(f"❌ Не удалось обновить ранг в БД: {e}", ephemeral=True)
-            return
-
-        await interaction.followup.send(f"✅ Ранг обновлён: {user.mention} → **{rank}**", ephemeral=True)
-
-    @app_commands.command(name="changenick", description="Изменить Riot-ник игрока (без изменения ранга)")
-    @app_commands.describe(user="Участник", username="Новый Riot-ник")
-    @admin_only()
-    async def changenick(self, interaction: discord.Interaction, user: discord.Member, username: str):
-        username = username.strip()
-        if not (1 <= len(username) <= 32):
-            await interaction.response.send_message("❌ Ник должен быть 1–32 символа.", ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        try:
-            # создаём профиль при необходимости
-            await api_client.update_player_profile(
-                discord_id=user.id,
-                username=username,
-                rank=None,
-                create_if_not_exist=True,
-            )
-        except Exception as e:
-            await interaction.followup.send(f"❌ Не удалось обновить ник в БД: {e}", ephemeral=True)
-            return
-
-        # контрольное чтение (не обязательно, но удобно)
-        fresh = await api_client.get_player_profile(user.id)
-        if fresh and fresh.get("username") == username:
-            await interaction.followup.send(f"✅ Ник обновлён: {user.mention} → **{username}**", ephemeral=True)
-        else:
-            await interaction.followup.send("⚠ Ник отправлен, но API не подтвердило обновление.", ephemeral=True)
 
     @app_commands.command(name="changewins", description="Установить количество побед игрока")
     @app_commands.describe(user="Участник", wins="Новое количество побед")
@@ -249,9 +185,9 @@ class Admin(commands.Cog):
         await interaction.followup.send(f"🏆 Победы установлены: {user.mention} → **{wins}**", ephemeral=True)
 
     @app_commands.command(name="ban", description="Забанить игрока по discord_id на время (10m/2h/1d)")
-    @app_commands.describe(discord_id="Discord ID игрока", duration="Длительность: 10m/2h/1d", reason="Причина")
+    @app_commands.describe(user="Имя игрока", duration="Длительность: 10m/2h/1d", reason="Причина")
     @admin_only()
-    async def ban(self, interaction: discord.Interaction, discord_id: str, duration: str, reason: str = "No reason"):
+    async def ban(self, interaction: discord.Interaction, user: discord.Member, duration: str, reason: str = "No reason"):
         await interaction.response.defer(ephemeral=True, thinking=True)
 
         s = duration.strip().lower()
@@ -273,7 +209,7 @@ class Admin(commands.Cog):
 
         try:
             ok = await api_client.ban_player(
-                discord_id=int(discord_id),
+                discord_id=int(user.id),
                 expires_at=expires_at,
                 reason=reason,
             )
@@ -283,7 +219,7 @@ class Admin(commands.Cog):
 
         if ok:
             await interaction.followup.send(
-                f"🔐 Бан выдан: **{discord_id}**\n"
+                f"🔐 Бан выдан: **{user.id}**\n"
                 f"⏳ До: **{expires_at.isoformat()}** (UTC)\n"
                 f"📝 Причина: **{reason}**",
                 ephemeral=True
@@ -299,11 +235,8 @@ class Admin(commands.Cog):
             description="Доступны верхнеуровневые команды:",
             color=discord.Color.red()
         )
-        embed.add_field(name="/changerank", value="Изменить ранг игрока", inline=False)
-        embed.add_field(name="/changenick", value="Изменить Riot-ник игрока", inline=False)
         embed.add_field(name="/changewins", value="Установить победы игрока", inline=False)
         embed.add_field(name="/ban", value="Бан по discord_id на время", inline=False)
-        embed.add_field(name="/prizeswebhook", value="Отправить сообщение о призах в webhook", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="prizeswebhook", description="Отправить сообщение о призах в заданный webhook")

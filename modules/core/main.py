@@ -108,11 +108,17 @@ async def setup_hook():
 
     bot.close = _close_with_http
 
-    # Синхронизация команд на сервере (быстро, без ожидания глобального кэша)
+    # Синхронизация команд только в guild + очистка глобальных,
+    # чтобы в клиенте Discord не было дубликатов команд.
     try:
         guild = discord.Object(id=GUILD_ID)
 
-        # ВАЖНО: копируем глобальные команды в guild и синкаем их туда
+        # 1) удаляем глобальные команды (они часто дублируют guild-команды в интерфейсе)
+        bot.tree.clear_commands(guild=None)
+        await bot.tree.sync()
+
+        # 2) полностью пересобираем guild-набор из актуальных команд кода
+        bot.tree.clear_commands(guild=guild)
         bot.tree.copy_global_to(guild=guild)
         synced = await bot.tree.sync(guild=guild)
 
