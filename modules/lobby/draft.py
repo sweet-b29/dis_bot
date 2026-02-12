@@ -5,8 +5,24 @@ from discord import File
 from modules.utils import api_client
 from modules.utils.api_client import get_leaderboard_top
 from modules.utils.image_generator import generate_draft_image, generate_map_ban_image, generate_final_match_image
+import os
 
-MAX_PLAYERS = 4 # Измените при необходимости
+def _parse_role_ids(env_name: str) -> list[int]:
+    raw = os.getenv(env_name, "")
+    out: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.append(int(part))
+        except ValueError:
+            continue
+    return out
+
+# роли, которым разрешён доступ в тим-войсы и перемещение участников
+ALLOWED_ROLES: list[int] = _parse_role_ids("ALLOWED_ROLES")
+
 
 async def format_player_name(member: discord.Member) -> str:
     profile = await api_client.get_player_profile(member.id)
@@ -278,10 +294,23 @@ class Draft:
         for idx, (team_members, name) in enumerate(zip(teams, names)):
             overwrites = {
                 self.guild.default_role: discord.PermissionOverwrite(connect=False),
-                self.guild.me: discord.PermissionOverwrite(connect=True, speak=True),
+                self.guild.me: discord.PermissionOverwrite(connect=True, speak=True, move_members=True),
             }
+
+            # ✅ доступ для ролей (например: модеры, судьи, организаторы)
+            for rid in ALLOWED_ROLES:
+                role = self.guild.get_role(rid)
+                if role:
+                    overwrites[role] = discord.PermissionOverwrite(
+                        connect=True,
+                        speak=True,
+                        view_channel=True,
+                        move_members=True,
+                    )
+
+            # ✅ доступ для игроков матча
             for member in team_members + [self.captains[idx]]:
-                overwrites[member] = discord.PermissionOverwrite(connect=True, speak=True)
+                overwrites[member] = discord.PermissionOverwrite(connect=True, speak=True, view_channel=True)
 
             vc = await self.guild.create_voice_channel(
                 name=name,
