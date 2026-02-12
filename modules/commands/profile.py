@@ -6,7 +6,9 @@ import asyncio
 from modules.utils import api_client
 from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
 from modules.utils.rank_sync import riot_id_is_valid
-#from modules.utils.profiles_cache import profiles_cache
+#from modules.utils.profiles_cache import profiles_cachefrom modules.utils.image_generator import generate_profile_card
+from io import BytesIO
+
 
 
 # === Rank options (ВАЖНО: Select <= 25 опций, поэтому делим на 2 меню) ===
@@ -206,8 +208,6 @@ async def send_profile_card(interaction: discord.Interaction, edit: bool = False
     discord_id = interaction.user.id
 
     if not edit and not interaction.response.is_done():
-        # Подтверждаем interaction сразу, чтобы не словить Unknown interaction
-        # при медленном ответе внешнего API.
         await interaction.response.defer(ephemeral=True, thinking=True)
 
     try:
@@ -216,28 +216,52 @@ async def send_profile_card(interaction: discord.Interaction, edit: bool = False
         profile = None
 
     riot_id = (profile or {}).get("username") or "—"
-    rank = (profile or {}).get("rank") or "—"
-    wins = (profile or {}).get("wins")
-    wins_text = str(wins) if wins is not None else "—"
+    rank = (profile or {}).get("rank") or "Unranked"
+    wins = int((profile or {}).get("wins") or 0)
 
-    embed = discord.Embed(title="Профиль игрока")
-    embed.add_field(name="Discord", value=f"<@{discord_id}>", inline=False)
-    embed.add_field(name="Riot ID", value=riot_id, inline=True)
-    embed.add_field(name="Ранг", value=rank, inline=True)
-    embed.add_field(name="Победы", value=wins_text, inline=True)
+    # если у тебя уже есть matches в API — используем, иначе 0
+    matches = int((profile or {}).get("matches") or 0)
+
+    # аватар Discord (bytes)
+    avatar_bytes = None
+    try:
+        url = interaction.user.display_avatar.replace(size=256).url
+        session = getattr(interaction.client, "http_session", None)
+        if session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    avatar_bytes = await resp.read()
+    except Exception:
+        avatar_bytes = None
+
+    # генерим картинку
+    out_path = generate_profile_card(
+        discord_name=interaction.user.name,
+        riot_username=riot_id,
+        rank=rank,
+        wins=wins,
+        matches=matches,
+        avatar_bytes=avatar_bytes,
+    )
+
+    file = discord.File(fp=str(out_path), filename="profile.png")
+
+    embed = discord.Embed()
+    embed.set_image(url="attachment://profile.png")
 
     view = ProfileCardView()
 
     if edit:
         if not interaction.response.is_done():
-            await interaction.response.edit_message(embed=embed, view=view)
+            await interaction.response.edit_message(embed=embed, attachments=[file], view=view)
         else:
-            await interaction.edit_original_response(embed=embed, view=view)
+            await interaction.edit_original_response(embed=embed, attachments=[file], view=view)
     else:
         if not interaction.response.is_done():
-            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            await interaction.response.send_message(embed=embed, file=file, view=view, ephemeral=True)
         else:
-            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+            await interaction.followup.send(embed=embed, file=file, view=view, ephemeral=True)
+
 
 
 class Profile(commands.Cog):

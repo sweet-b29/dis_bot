@@ -764,7 +764,7 @@ def generate_profile_card(
     name_font = get_font(64)
 
     # ---------- заголовок ----------
-    _draw_text(draw, (70, 40), "PROFILE", title_font, fill="white", stroke=4)
+    _draw_text(draw, (70, 40), "VALORANT", title_font, fill="white", stroke=4)
     # тонкая линия под заголовком
     draw.line([(70, 150), (WIDTH - 70, 150)], fill=(255, 255, 255, 35), width=2)
 
