@@ -934,7 +934,7 @@ def generate_profile_card(
 
     # 2) Иконка ранга — строго по центру правой панели
     icon_size = 132
-    icy = (right_y1 + right_y2) // 2 - 10
+    icy = (right_y1 + right_y2) // 2 - 30
 
     ring = 10
     draw.ellipse(
@@ -955,11 +955,11 @@ def generate_profile_card(
         _draw_text(draw, (icx - 18, icy - 52), "?", get_font(96), fill="white", stroke=4)
 
     # 3) Wins
-    label_font = get_font(30)
+    label_font = get_font(28)
     value_font_big = get_font(96)
 
-    wins_label_y = right_y2 - 205
-    wins_value_y = right_y2 - 155
+    wins_label_y = icy + (icon_size // 2) + 46
+    wins_value_y = wins_label_y + 40
 
     _w = draw.textlength("Wins", font=label_font)
     _draw_text(
