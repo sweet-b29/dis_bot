@@ -768,23 +768,6 @@ def generate_profile_card(
     except Exception:
         pass
 
-    # ---------- Valentine overlay (очень мягкий) ----------
-    if (theme or "").lower() == "valentine":
-        try:
-            overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-            od = ImageDraw.Draw(overlay)
-
-            # несколько маленьких сердечек по углам
-            heart = "♥"
-            hf = get_symbol_font(72)
-            for (x, y, a) in [(70, 560, 35), (1120, 80, 30), (1040, 580, 25), (160, 110, 18)]:
-                od.text((x, y), heart, font=hf, fill=(255, 90, 160, a))
-
-            img = Image.alpha_composite(img, overlay)
-            draw = ImageDraw.Draw(img)
-        except Exception:
-            pass
-
 
     # ---------- стиль ----------
     THEMES = {
@@ -897,17 +880,30 @@ def generate_profile_card(
     _draw_text(draw, (cx - int(rn_w)//2, mid_y2 - 86), rn, rfont, fill=(210, 210, 210, 255), stroke=2)
 
     # ---------- доп. инфо (streak / fav map) ----------
-    info_font = get_font(30)
+    # ВАЖНО: win_streak может быть 0 — это валидное значение
+    info_color = (210, 210, 210, 255)
 
-    streak_txt = "Win streak: —" if not win_streak else f"Win streak: {win_streak}"
+    streak_txt = f"Win streak: {win_streak}" if win_streak is not None else "Win streak: —"
     fav_txt = f"Fav map: {favorite_map}" if favorite_map else "Fav map: —"
 
-    # две строки под Riot ID
-    sx = mid_x1 + 36
-    sy = mid_y2 - 46  # низ центральной панели
-    _draw_text(draw, (sx, sy), streak_txt, info_font, fill=(210, 210, 210, 255), stroke=2)
-    _draw_text(draw, (sx, sy + 34), fav_txt, info_font, fill=(210, 210, 210, 255), stroke=2)
+    # рисуем 2 строки аккуратно внутри центральной панели (по центру снизу)
+    panel_center_x = (mid_x1 + mid_x2) // 2
+    bottom_pad = 34
+    line_gap = 30
 
+    # подбираем шрифт под ширину центральной панели
+    max_w = (mid_x2 - mid_x1) - 72
+    streak_font = _fit_font(draw, streak_txt, max_w, start=30, min_size=22)
+    fav_font = _fit_font(draw, fav_txt, max_w, start=30, min_size=22)
+
+    # Y так, чтобы обе строки гарантированно влезали
+    sy = mid_y2 - bottom_pad - (line_gap + 22)
+
+    sw = draw.textlength(streak_txt, font=streak_font)
+    fw = draw.textlength(fav_txt, font=fav_font)
+
+    _draw_text(draw, (panel_center_x - int(sw) // 2, sy), streak_txt, streak_font, fill=info_color, stroke=2)
+    _draw_text(draw, (panel_center_x - int(fw) // 2, sy + line_gap), fav_txt, fav_font, fill=info_color, stroke=2)
 
     # ---------- правая панель: ранг ----------
     rank_raw = str(rank or "Unranked").strip()
@@ -960,6 +956,33 @@ def generate_profile_card(
     big = str(wins)
     bw = draw.textlength(big, font=value_font_big)
     _draw_text(draw, (icx - int(bw) // 2, wins_value_y), big, value_font_big, fill="white", stroke=4)
+
+    # ---------- Valentine overlay (ПОСЛЕ панелей, чтобы не перекрывалось) ----------
+    if (theme or "").lower() == "valentine":
+        try:
+            overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+            od = ImageDraw.Draw(overlay)
+
+            heart = "♥"
+            hf_big = get_symbol_font(64)
+            hf_small = get_symbol_font(42)
+
+            # ставим сердца в "свободных" зонах (фон), чтобы не мешали читабельности
+            hearts = [
+                (90, 170, 28, hf_big),
+                (1150, 165, 24, hf_big),
+                (80, 610, 22, hf_small),
+                (1180, 600, 18, hf_small),
+                (1040, 80, 16, hf_small),
+                (180, 90, 14, hf_small),
+            ]
+            for x, y, a, f in hearts:
+                od.text((x, y), heart, font=f, fill=(255, 90, 160, a))
+
+            img = Image.alpha_composite(img, overlay)
+            draw = ImageDraw.Draw(img)
+        except Exception:
+            pass
 
     img.save(out_path)
     return out_path
