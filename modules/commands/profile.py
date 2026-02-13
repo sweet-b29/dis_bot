@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import asyncio
+import os
 
 from modules.utils import api_client
 from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
@@ -234,6 +235,18 @@ async def send_profile_card(interaction: discord.Interaction, edit: bool = False
     except Exception:
         avatar_bytes = None
 
+    theme = os.getenv("PROFILE_THEME", "default")
+
+    win_streak = (profile or {}).get("win_streak")
+    try:
+        win_streak = int(win_streak) if win_streak is not None else None
+    except Exception:
+        win_streak = None
+
+    favorite_map = (profile or {}).get("favorite_map")
+    favorite_map = str(favorite_map).strip() if favorite_map else None
+
+
     # генерим картинку
     out_path = generate_profile_card(
         discord_name=interaction.user.name,
@@ -242,6 +255,9 @@ async def send_profile_card(interaction: discord.Interaction, edit: bool = False
         wins=wins,
         matches=matches,
         avatar_bytes=avatar_bytes,
+        theme=theme,
+        win_streak=win_streak,
+        favorite_map=favorite_map,
     )
 
     file = discord.File(fp=str(out_path), filename="profile.png")

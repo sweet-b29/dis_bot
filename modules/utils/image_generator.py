@@ -719,6 +719,9 @@ def generate_profile_card(
     wins: int,
     matches: int,
     avatar_bytes: bytes | None = None,
+    theme: str = "default",
+    win_streak: int | None = None,
+    favorite_map: str | None = None,
 ) -> Path:
     """
     Генерирует красивую профиль-карту 1280x720:
@@ -753,10 +756,42 @@ def generate_profile_card(
     except Exception:
         pass
 
+    # ---------- Valentine overlay (очень мягкий) ----------
+    if (theme or "").lower() == "valentine":
+        try:
+            overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+            od = ImageDraw.Draw(overlay)
+
+            # несколько маленьких сердечек по углам
+            heart = "♥"
+            hf = get_font(72)
+            for (x, y, a) in [(70, 560, 35), (1120, 80, 30), (1040, 580, 25), (160, 110, 18)]:
+                od.text((x, y), heart, font=hf, fill=(255, 90, 160, a))
+
+            img = Image.alpha_composite(img, overlay)
+            draw = ImageDraw.Draw(img)
+        except Exception:
+            pass
+
+
     # ---------- стиль ----------
-    ACCENT = (255, 170, 60, 255)         # тёплый акцент
-    PANEL_FILL = (0, 0, 0, 120)
-    PANEL_OUT = (255, 255, 255, 35)
+    THEMES = {
+        "default": {
+            "accent": (255, 170, 60, 255),
+            "panel_fill": (0, 0, 0, 120),
+            "panel_out": (255, 255, 255, 35),
+        },
+        "valentine": {
+            "accent": (255, 90, 160, 255),
+            "panel_fill": (0, 0, 0, 120),
+            "panel_out": (255, 255, 255, 35),
+        }
+    }
+    cfg = THEMES.get((theme or "default").lower(), THEMES["default"])
+
+    ACCENT = cfg["accent"]
+    PANEL_FILL = cfg["panel_fill"]
+    PANEL_OUT = cfg["panel_out"]
 
     title_font = get_font(86)
     small_font = get_font(34)
@@ -849,23 +884,42 @@ def generate_profile_card(
     rn_w = draw.textlength(rn, font=rfont)
     _draw_text(draw, (cx - int(rn_w)//2, mid_y2 - 86), rn, rfont, fill=(210, 210, 210, 255), stroke=2)
 
+    # ---------- доп. инфо (streak / fav map) ----------
+    info_font = get_font(30)
+
+    streak_txt = "Win streak: —" if not win_streak else f"Win streak: {win_streak}"
+    fav_txt = f"Fav map: {favorite_map}" if favorite_map else "Fav map: —"
+
+    # две строки под Riot ID
+    sx = mid_x1 + 36
+    sy = mid_y2 - 46  # низ центральной панели
+    _draw_text(draw, (sx, sy), streak_txt, info_font, fill=(210, 210, 210, 255), stroke=2)
+    _draw_text(draw, (sx, sy + 34), fav_txt, info_font, fill=(210, 210, 210, 255), stroke=2)
+
+
     # ---------- правая панель: ранг ----------
     rank_raw = str(rank or "Unranked").strip()
     rb = _rank_base_text(rank_raw)
-
     icon_path = get_icon_path(rank_raw) or _rank_icon_path(rb)
 
-    # слот под иконку
-    icon_size = 110
     icx = (right_x1 + right_x2) // 2
-    icy = right_y1 + 175
 
-    RING = 8  # толщина "ободка"
+    # 1) Ранг — ВЕРХ карточки (по центру)
+    rname = rank_raw if rank_raw else rb
+    rname_font = get_font(52)
+    rw = draw.textlength(rname, font=rname_font)
+    _draw_text(draw, (icx - int(rw) // 2, right_y1 + 34), rname, rname_font, fill=ACCENT, stroke=3)
+
+    # 2) Иконка ранга — центр (чуть выше середины)
+    icon_size = 120
+    icy = right_y1 + 210
+
+    ring = 10
     draw.ellipse(
-        (icx - icon_size // 2 - RING, icy - icon_size // 2 - RING,
-         icx + icon_size // 2 + RING, icy + icon_size // 2 + RING),
-        fill=(0, 0, 0, 130),
-        outline=(255, 255, 255, 40),
+        (icx - icon_size // 2 - ring, icy - icon_size // 2 - ring,
+         icx + icon_size // 2 + ring, icy + icon_size // 2 + ring),
+        fill=(0, 0, 0, 120),
+        outline=(255, 255, 255, 45),
         width=4
     )
 
@@ -874,24 +928,20 @@ def generate_profile_card(
             icon = Image.open(icon_path).convert("RGBA").resize((icon_size, icon_size), Image.LANCZOS)
             img.paste(icon, (icx - icon_size // 2, icy - icon_size // 2), icon)
         except Exception:
-            _draw_text(draw, (icx - 22, icy - 40), "?", get_font(96), fill="white", stroke=4)
+            _draw_text(draw, (icx - 18, icy - 52), "?", get_font(96), fill="white", stroke=4)
     else:
-        _draw_text(draw, (icx - 22, icy - 40), "?", get_font(96), fill="white", stroke=4)
+        _draw_text(draw, (icx - 18, icy - 52), "?", get_font(96), fill="white", stroke=4)
 
-    # текст ранга
-    rname = rank_raw if rank_raw else rb
-    rname_font = get_font(54)
-    rw = draw.textlength(rname, font=rname_font)
-    _draw_text(draw, (icx - int(rw)//2, right_y2 - 170), rname, rname_font, fill=ACCENT, stroke=3)
-
+    # 3) Подпись + крупная цифра — НИЗ карточки (по центру)
     label_font = get_font(34)
-    value_font_big = get_font(88)
+    value_font_big = get_font(96)
 
-    _draw_text(draw, (right_x1 + 40, right_y2 - 135), "Wins", label_font, fill=(220, 220, 220, 255), stroke=2)
+    _draw_text(draw, (icx - int(draw.textlength("Wins", font=label_font)) // 2, right_y2 - 190),
+               "Wins", label_font, fill=(220, 220, 220, 255), stroke=2)
 
     big = str(wins)
     bw = draw.textlength(big, font=value_font_big)
-    _draw_text(draw, (icx - int(bw) // 2, right_y2 - 125), big, value_font_big, fill="white", stroke=4)
+    _draw_text(draw, (icx - int(bw) // 2, right_y2 - 160), big, value_font_big, fill="white", stroke=4)
 
     img.save(out_path)
     return out_path
