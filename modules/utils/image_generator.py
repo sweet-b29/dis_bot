@@ -799,10 +799,10 @@ def generate_profile_card(
     draw.line([(70, 150), (WIDTH - 70, 150)], fill=(255, 255, 255, 35), width=2)
 
     # ---------- панели ----------
-    # Левая панель (статы)
+    # Левая панель (статы) — рамку нарисуем ПОСЛЕ расчёта высоты
     left_x1, left_y1 = 70, 190
-    left_x2, left_y2 = 430, 630
-    draw.rounded_rectangle((left_x1, left_y1, left_x2, left_y2), radius=26, fill=PANEL_FILL, outline=PANEL_OUT, width=2)
+    left_x2 = 430
+    left_y2 = 630
 
     # Центральная панель (аватар + ник)
     mid_x1, mid_y1 = 460, 190
@@ -812,7 +812,8 @@ def generate_profile_card(
     # Правая панель (ранг)
     right_x1, right_y1 = 890, 190
     right_x2, right_y2 = 1210, 630
-    draw.rounded_rectangle((right_x1, right_y1, right_x2, right_y2), radius=26, fill=PANEL_FILL, outline=PANEL_OUT, width=2)
+    draw.rounded_rectangle((right_x1, right_y1, right_x2, right_y2), radius=26, fill=PANEL_FILL, outline=PANEL_OUT,
+                           width=2)
 
     # ---------- расчёты ----------
     wins = int(wins or 0)
@@ -831,8 +832,14 @@ def generate_profile_card(
     ]
 
     # компактная верстка под 6 строк
-    STAT_ROW_H = 68
-    STAT_GAP = 14
+    STAT_ROW_H = 62
+    STAT_GAP = 12
+    TOP_PAD = 22
+    BOT_PAD = 22
+
+    needed_h = TOP_PAD + len(rows) * STAT_ROW_H + (len(rows) - 1) * STAT_GAP + BOT_PAD
+    left_y2 = left_y1 + needed_h
+    draw.rounded_rectangle((left_x1, left_y1, left_x2, left_y2), radius=26, fill=PANEL_FILL, outline=PANEL_OUT, width=2)
 
     ry = left_y1 + 22
     for label, value in rows:
@@ -969,15 +976,22 @@ def generate_profile_card(
     else:
         _draw_text(draw, (icx - 18, icy - 52), "?", get_font(96), fill="white", stroke=4)
 
-    # 3) Wins + цифра — внизу, с нормальными отступами
-    label_font = get_font(34)
+    # 3) Wins
+    label_font = get_font(30)
     value_font_big = get_font(96)
 
-    wins_label_y = right_y2 - 190
-    wins_value_y = right_y2 - 150
+    wins_label_y = right_y2 - 205
+    wins_value_y = right_y2 - 155
 
     _w = draw.textlength("Wins", font=label_font)
-    _draw_text(draw, (icx - int(_w) // 2, wins_label_y), "Wins", label_font, fill=(220, 220, 220, 255), stroke=2)
+    _draw_text(
+        draw,
+        (icx - int(_w) // 2, wins_label_y),
+        "Wins",
+        label_font,
+        fill=(235, 235, 235, 230),
+        stroke=2
+    )
 
     big = str(wins)
     bw = draw.textlength(big, font=value_font_big)
@@ -989,38 +1003,42 @@ def generate_profile_card(
         Сердце как фигура: 2 круга + треугольник.
         x,y — левый верхний угол, s — размер (квадрат s×s)
         """
-        r = s // 4  # радиус "половинок"
+        r = max(1, s // 4)
         # два круга сверху
         od.ellipse((x + r, y, x + r + 2 * r, y + 2 * r), fill=fill)
         od.ellipse((x + 2 * r, y, x + 2 * r + 2 * r, y + 2 * r), fill=fill)
-        # нижняя часть (треугольник)
-        od.polygon(
-            [
-                (x + r, y + r),
-                (x + 3 * r * 2, y + r),  # правый край
-                (x + 2 * r, y + s),  # низ
-            ],
-            fill=fill
-        )
+        # нижняя часть
+        od.polygon([(x + r, y + r), (x + s - r, y + r), (x + s // 2, y + s)], fill=fill)
 
     if (theme or "").lower() == "valentine":
         try:
             overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
             od = ImageDraw.Draw(overlay)
 
-            # заметная альфа + разные размеры
-            HEART = (255, 90, 160, 120)
+            # безопасные отступы, чтобы сердца не резались по краям
+            M = 18
+
+            # внешняя "обводка" сердца (чуть темнее) + внутренняя заливка
+            OUT = (255, 90, 160, 160)
+            IN = (255, 90, 160, 110)
 
             hearts = [
-                (90, 165, 46),
-                (1180, 160, 44),
-                (85, 620, 34),
-                (1210, 605, 32),
-                (1030, 70, 28),
-                (170, 85, 26),
+                (70, 160, 46),
+                (WIDTH - 70 - 46, 155, 46),
+                (70, HEIGHT - 70 - 34, 34),
+                (WIDTH - 70 - 34, HEIGHT - 70 - 34, 34),
+                (WIDTH - 160, 80, 28),
+                (160, 90, 28),
             ]
+
             for x, y, s in hearts:
-                _draw_heart(od, x, y, s, HEART)
+                # clamp внутрь холста
+                x = max(M, min(x, WIDTH - M - s))
+                y = max(M, min(y, HEIGHT - M - s))
+
+                # "обводка": рисуем чуть больше и ниже, потом внутрь
+                _draw_heart(od, x - 2, y - 2, s + 4, OUT)
+                _draw_heart(od, x, y, s, IN)
 
             img = Image.alpha_composite(img, overlay)
             draw = ImageDraw.Draw(img)
