@@ -3,6 +3,7 @@ from pathlib import Path
 from functools import lru_cache
 import re
 from io import BytesIO
+import random
 
 
 # Пути к файлам
@@ -915,29 +916,6 @@ def generate_profile_card(
     rn_w = draw.textlength(rn, font=rfont)
     _draw_text(draw, (cx - int(rn_w)//2, mid_y2 - 86), rn, rfont, fill=(210, 210, 210, 255), stroke=2)
 
-    # ---------- доп. инфо (streak / fav map) ----------
-    # ВАЖНО: win_streak может быть 0 — это валидное значение
-    info_color = (210, 210, 210, 255)
-
-    streak_txt = f"Win streak: {win_streak}" if win_streak is not None else "Win streak: —"
-    fav_txt = f"Fav map: {favorite_map}" if favorite_map else "Fav map: —"
-
-    # рисуем 2 строки аккуратно внутри центральной панели (по центру снизу)
-    panel_center_x = (mid_x1 + mid_x2) // 2
-    bottom_pad = 34
-    line_gap = 30
-
-    # подбираем шрифт под ширину центральной панели
-    max_w = (mid_x2 - mid_x1) - 72
-    streak_font = _fit_font(draw, streak_txt, max_w, start=30, min_size=22)
-    fav_font = _fit_font(draw, fav_txt, max_w, start=30, min_size=22)
-
-    # Y так, чтобы обе строки гарантированно влезали
-    sy = mid_y2 - bottom_pad - (line_gap + 22)
-
-    sw = draw.textlength(streak_txt, font=streak_font)
-    fw = draw.textlength(fav_txt, font=fav_font)
-
     # ---------- правая панель: ранг ----------
     rank_raw = str(rank or "Unranked").strip()
     rb = _rank_base_text(rank_raw)
@@ -998,47 +976,94 @@ def generate_profile_card(
     _draw_text(draw, (icx - int(bw) // 2, wins_value_y), big, value_font_big, fill="white", stroke=4)
 
     # ---------- Valentine overlay ----------
-    def _draw_heart(od: ImageDraw.ImageDraw, x: int, y: int, s: int, fill):
+    def _make_heart_sprite(size: int, color_rgba: tuple[int, int, int, int]) -> Image.Image:
         """
-        Сердце как фигура: 2 круга + треугольник.
-        x,y — левый верхний угол, s — размер (квадрат s×s)
+        Генерирует аккуратное сердечко как RGBA-спрайт (без кривых краёв).
         """
-        r = max(1, s // 4)
-        # два круга сверху
-        od.ellipse((x + r, y, x + r + 2 * r, y + 2 * r), fill=fill)
-        od.ellipse((x + 2 * r, y, x + 2 * r + 2 * r, y + 2 * r), fill=fill)
-        # нижняя часть
-        od.polygon([(x + r, y + r), (x + s - r, y + r), (x + s // 2, y + s)], fill=fill)
+        size = max(12, int(size))
+        s = size
+        spr = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+        d = ImageDraw.Draw(spr)
+
+        # параметры сердца внутри квадрата s×s
+        r = int(s * 0.28)  # радиус верхних "половинок"
+        cx1, cy = int(s * 0.35), int(s * 0.28)
+        cx2 = int(s * 0.65)
+
+        # два круга
+        d.ellipse((cx1 - r, cy - r, cx1 + r, cy + r), fill=color_rgba)
+        d.ellipse((cx2 - r, cy - r, cx2 + r, cy + r), fill=color_rgba)
+
+        # нижний треугольник (точно влезает)
+        top_y = cy + int(r * 0.45)
+        d.polygon(
+            [(int(s * 0.10), top_y), (int(s * 0.90), top_y), (s // 2, int(s * 0.95))],
+            fill=color_rgba
+        )
+
+        return spr
+
+    def _rect_intersects(a, b) -> bool:
+        ax1, ay1, ax2, ay2 = a
+        bx1, by1, bx2, by2 = b
+        return not (ax2 <= bx1 or ax1 >= bx2 or ay2 <= by1 or ay1 >= by2)
 
     if (theme or "").lower() == "valentine":
         try:
             overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-            od = ImageDraw.Draw(overlay)
 
-            # безопасные отступы, чтобы сердца не резались по краям
-            M = 18
-
-            # внешняя "обводка" сердца (чуть темнее) + внутренняя заливка
-            OUT = (255, 90, 160, 160)
-            IN = (255, 90, 160, 110)
-
-            hearts = [
-                (70, 160, 46),
-                (WIDTH - 70 - 46, 155, 46),
-                (70, HEIGHT - 70 - 34, 34),
-                (WIDTH - 70 - 34, HEIGHT - 70 - 34, 34),
-                (WIDTH - 160, 80, 28),
-                (160, 90, 28),
+            # "опасные" зоны: заголовок+линия, и три панели (чтобы сердца не лезли на контент)
+            safe_rects = [
+                (0, 0, WIDTH, 165),  # заголовок
+                (left_x1 - 8, left_y1 - 8, left_x2 + 8, left_y2 + 8),
+                (mid_x1 - 8, mid_y1 - 8, mid_x2 + 8, mid_y2 + 8),
+                (right_x1 - 8, right_y1 - 8, right_x2 + 8, right_y2 + 8),
             ]
 
-            for x, y, s in hearts:
-                # clamp внутрь холста
-                x = max(M, min(x, WIDTH - M - s))
-                y = max(M, min(y, HEIGHT - M - s))
+            # рандом: количество / размеры / поворот / прозрачность
+            count = random.randint(6, 14)
+            tries = 0
+            placed = 0
 
-                # "обводка": рисуем чуть больше и ниже, потом внутрь
-                _draw_heart(od, x - 2, y - 2, s + 4, OUT)
-                _draw_heart(od, x, y, s, IN)
+            while placed < count and tries < 300:
+                tries += 1
+
+                size = random.randint(22, 54)
+                angle = random.randint(-28, 28)
+                alpha = random.randint(90, 170)
+
+                # цвет под Valentine
+                inner = (255, 90, 160, alpha)
+                outer = (255, 90, 160, min(255, alpha + 40))
+
+                # делаем спрайт + "обводку" (чуть больше)
+                heart_out = _make_heart_sprite(size + 6, outer)
+                heart_in = _make_heart_sprite(size, inner)
+
+                # поворот
+                heart_out = heart_out.rotate(angle, resample=Image.BICUBIC, expand=True)
+                heart_in = heart_in.rotate(angle, resample=Image.BICUBIC, expand=True)
+
+                w, h = heart_out.size
+
+                # случайная позиция по холсту
+                x = random.randint(10, max(10, WIDTH - w - 10))
+                y = random.randint(10, max(10, HEIGHT - h - 10))
+
+                heart_rect = (x, y, x + w, y + h)
+
+                # не пересекать safe-зоны
+                if any(_rect_intersects(heart_rect, r) for r in safe_rects):
+                    continue
+
+                # пастим: сначала обводку, потом внутрь по центру
+                overlay.paste(heart_out, (x, y), heart_out)
+
+                ix = x + (heart_out.size[0] - heart_in.size[0]) // 2
+                iy = y + (heart_out.size[1] - heart_in.size[1]) // 2
+                overlay.paste(heart_in, (ix, iy), heart_in)
+
+                placed += 1
 
             img = Image.alpha_composite(img, overlay)
             draw = ImageDraw.Draw(img)
