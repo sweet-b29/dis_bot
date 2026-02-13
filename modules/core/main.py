@@ -105,6 +105,7 @@ async def setup_hook():
     # Синхронизация slash-команд в конкретную гильдию (быстро появляется в Discord)
     try:
         guild = discord.Object(id=GUILD_ID)
+        bot.tree.copy_global_to(guild=guild)
         synced = await bot.tree.sync(guild=guild)
         logger.success(f"✅ Slash-команды синхронизированы в guild={GUILD_ID}. Всего: {len(synced)}")
     except Exception as e:

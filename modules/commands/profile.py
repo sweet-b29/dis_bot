@@ -6,7 +6,7 @@ import asyncio
 from modules.utils import api_client
 from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
 from modules.utils.rank_sync import riot_id_is_valid
-#from modules.utils.profiles_cache import profiles_cachefrom modules.utils.image_generator import generate_profile_card
+from modules.utils.image_generator import generate_profile_card
 from io import BytesIO
 
 
