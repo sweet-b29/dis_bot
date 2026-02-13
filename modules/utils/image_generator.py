@@ -94,6 +94,18 @@ def get_font(size: int):
         # 3) безопасный фоллбэк — встроенный bitmap-шрифт
         return ImageFont.load_default()
 
+def get_symbol_font(size: int):
+    """
+    Шрифт для символов типа ♥. Inter может не содержать глиф.
+    DejaVuSans обычно есть в окружении Pillow.
+    """
+    try:
+        return ImageFont.truetype("DejaVuSans.ttf", size)
+    except Exception:
+        # если вдруг DejaVuSans нет — откатываемся на обычный
+        return get_font(size)
+
+
 # Сопоставление "Immortal" → "Immortal_3_Rank.png"
 _RANK_ALIASES = {
     "plat": "Platinum",
@@ -764,7 +776,7 @@ def generate_profile_card(
 
             # несколько маленьких сердечек по углам
             heart = "♥"
-            hf = get_font(72)
+            hf = get_symbol_font(72)
             for (x, y, a) in [(70, 560, 35), (1120, 80, 30), (1040, 580, 25), (160, 110, 18)]:
                 od.text((x, y), heart, font=hf, fill=(255, 90, 160, a))
 
@@ -903,16 +915,19 @@ def generate_profile_card(
     icon_path = get_icon_path(rank_raw) or _rank_icon_path(rb)
 
     icx = (right_x1 + right_x2) // 2
+    panel_w = (right_x2 - right_x1)
+    pad = 26
+    max_text_w = panel_w - pad * 2
 
-    # 1) Ранг — ВЕРХ карточки (по центру)
+    # 1) Ранг — сверху, но шрифт подгоняем под ширину панели
     rname = rank_raw if rank_raw else rb
-    rname_font = get_font(52)
+    rname_font = _fit_font(draw, rname, max_text_w, start=56, min_size=30)
     rw = draw.textlength(rname, font=rname_font)
-    _draw_text(draw, (icx - int(rw) // 2, right_y1 + 34), rname, rname_font, fill=ACCENT, stroke=3)
+    _draw_text(draw, (icx - int(rw) // 2, right_y1 + 32), rname, rname_font, fill=ACCENT, stroke=3)
 
-    # 2) Иконка ранга — центр (чуть выше середины)
-    icon_size = 120
-    icy = right_y1 + 210
+    # 2) Иконка ранга — строго по центру правой панели
+    icon_size = 132
+    icy = (right_y1 + right_y2) // 2 - 10
 
     ring = 10
     draw.ellipse(
@@ -932,16 +947,19 @@ def generate_profile_card(
     else:
         _draw_text(draw, (icx - 18, icy - 52), "?", get_font(96), fill="white", stroke=4)
 
-    # 3) Подпись + крупная цифра — НИЗ карточки (по центру)
+    # 3) Wins + цифра — внизу, с нормальными отступами
     label_font = get_font(34)
     value_font_big = get_font(96)
 
-    _draw_text(draw, (icx - int(draw.textlength("Wins", font=label_font)) // 2, right_y2 - 190),
-               "Wins", label_font, fill=(220, 220, 220, 255), stroke=2)
+    wins_label_y = right_y2 - 190
+    wins_value_y = right_y2 - 150
+
+    _w = draw.textlength("Wins", font=label_font)
+    _draw_text(draw, (icx - int(_w) // 2, wins_label_y), "Wins", label_font, fill=(220, 220, 220, 255), stroke=2)
 
     big = str(wins)
     bw = draw.textlength(big, font=value_font_big)
-    _draw_text(draw, (icx - int(bw) // 2, right_y2 - 160), big, value_font_big, fill="white", stroke=4)
+    _draw_text(draw, (icx - int(bw) // 2, wins_value_y), big, value_font_big, fill="white", stroke=4)
 
     img.save(out_path)
     return out_path
