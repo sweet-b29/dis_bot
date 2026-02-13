@@ -826,17 +826,46 @@ def generate_profile_card(
         ("Winrate", (f"{winrate:.1f}".rstrip("0").rstrip(".") + "%") if matches > 0 else "—"),
         ("Wins", str(wins)),
         ("Loses", str(losses)),
+        ("Streak", str(win_streak) if win_streak is not None else "—"),
+        ("Fav map", favorite_map if favorite_map else "—"),
     ]
 
-    ry = left_y1 + 26
+    # компактная верстка под 6 строк
+    STAT_ROW_H = 68
+    STAT_GAP = 14
+
+    ry = left_y1 + 22
     for label, value in rows:
-        # мини-карточка строки
-        draw.rounded_rectangle((left_x1 + 20, ry, left_x2 - 20, ry + 86), radius=18,
-                               fill=(0, 0, 0, 110), outline=(255, 255, 255, 25), width=2)
-        _draw_text(draw, (left_x1 + 40, ry + 20), label, small_font, fill=(220, 220, 220, 255), stroke=2)
-        _draw_text(draw, (left_x2 - 40 - int(draw.textlength(value, font=value_font)), ry + 18),
-                   value, value_font, fill="white", stroke=2)
-        ry += 98
+        draw.rounded_rectangle(
+            (left_x1 + 20, ry, left_x2 - 20, ry + STAT_ROW_H),
+            radius=18,
+            fill=(0, 0, 0, 110),
+            outline=(255, 255, 255, 25),
+            width=2
+        )
+
+        # label
+        _draw_text(
+            draw,
+            (left_x1 + 40, ry + 16),
+            label,
+            small_font,
+            fill=(220, 220, 220, 255),
+            stroke=2
+        )
+
+        # value (справа)
+        val_w = int(draw.textlength(value, font=value_font))
+        _draw_text(
+            draw,
+            (left_x2 - 40 - val_w, ry + 12),
+            value,
+            value_font,
+            fill="white",
+            stroke=2
+        )
+
+        ry += STAT_ROW_H + STAT_GAP
 
     # ---------- центр: аватар круглый ----------
     avatar_size = 250
@@ -902,9 +931,6 @@ def generate_profile_card(
     sw = draw.textlength(streak_txt, font=streak_font)
     fw = draw.textlength(fav_txt, font=fav_font)
 
-    _draw_text(draw, (panel_center_x - int(sw) // 2, sy), streak_txt, streak_font, fill=info_color, stroke=2)
-    _draw_text(draw, (panel_center_x - int(fw) // 2, sy + line_gap), fav_txt, fav_font, fill=info_color, stroke=2)
-
     # ---------- правая панель: ранг ----------
     rank_raw = str(rank or "Unranked").strip()
     rb = _rank_base_text(rank_raw)
@@ -957,27 +983,44 @@ def generate_profile_card(
     bw = draw.textlength(big, font=value_font_big)
     _draw_text(draw, (icx - int(bw) // 2, wins_value_y), big, value_font_big, fill="white", stroke=4)
 
-    # ---------- Valentine overlay (ПОСЛЕ панелей, чтобы не перекрывалось) ----------
+    # ---------- Valentine overlay ----------
+    def _draw_heart(od: ImageDraw.ImageDraw, x: int, y: int, s: int, fill):
+        """
+        Сердце как фигура: 2 круга + треугольник.
+        x,y — левый верхний угол, s — размер (квадрат s×s)
+        """
+        r = s // 4  # радиус "половинок"
+        # два круга сверху
+        od.ellipse((x + r, y, x + r + 2 * r, y + 2 * r), fill=fill)
+        od.ellipse((x + 2 * r, y, x + 2 * r + 2 * r, y + 2 * r), fill=fill)
+        # нижняя часть (треугольник)
+        od.polygon(
+            [
+                (x + r, y + r),
+                (x + 3 * r * 2, y + r),  # правый край
+                (x + 2 * r, y + s),  # низ
+            ],
+            fill=fill
+        )
+
     if (theme or "").lower() == "valentine":
         try:
             overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
             od = ImageDraw.Draw(overlay)
 
-            heart = "♥"
-            hf_big = get_symbol_font(64)
-            hf_small = get_symbol_font(42)
+            # заметная альфа + разные размеры
+            HEART = (255, 90, 160, 120)
 
-            # ставим сердца в "свободных" зонах (фон), чтобы не мешали читабельности
             hearts = [
-                (90, 170, 28, hf_big),
-                (1150, 165, 24, hf_big),
-                (80, 610, 22, hf_small),
-                (1180, 600, 18, hf_small),
-                (1040, 80, 16, hf_small),
-                (180, 90, 14, hf_small),
+                (90, 165, 46),
+                (1180, 160, 44),
+                (85, 620, 34),
+                (1210, 605, 32),
+                (1030, 70, 28),
+                (170, 85, 26),
             ]
-            for x, y, a, f in hearts:
-                od.text((x, y), heart, font=f, fill=(255, 90, 160, a))
+            for x, y, s in hearts:
+                _draw_heart(od, x, y, s, HEART)
 
             img = Image.alpha_composite(img, overlay)
             draw = ImageDraw.Draw(img)
