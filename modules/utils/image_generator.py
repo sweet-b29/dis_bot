@@ -652,36 +652,25 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
     image = Image.open(base_path).convert("RGBA")
     draw = ImageDraw.Draw(image)
 
-    num_font  = get_font(42)
+    num_font = get_font(42)
     stat_font = get_font(36)
+
     icon_size = 54
-
-    row_h   = 86
+    row_h = 86
     row_gap = 10
+    start_y = 170
 
-    # ---- геометрия строки ----
-    PADDING_X = 90
-    row_left  = PADDING_X
-    row_right = image.width - PADDING_X
-
-    CONTENT_LEFT  = row_left
-    CONTENT_RIGHT = row_right
-
-    number_x = CONTENT_LEFT + 20
-    name_x   = CONTENT_LEFT + 90
-
-    # ---- ограничение по Y (чтобы не лезло на заголовок) ----
-    LIST_MIN_TOP = 180  # под твой макет, можно 170–200
-
-    count = max(len(players), 1)
-    list_height = count * row_h + (count - 1) * row_gap
-    start_y = max(LIST_MIN_TOP, (image.height - list_height) // 2)
+    number_x = 70
+    name_x = 150
+    rank_icon_x = 660
+    wins_x = 780
 
     def _text_h(text: str, font) -> int:
-        b = draw.textbbox((0, 0), text, font=font)
-        return b[3] - b[1]
-
-    is_valentine = True  # в понедельник просто поставишь False
+        try:
+            b = draw.textbbox((0, 0), text, font=font)
+            return b[3] - b[1]
+        except Exception:
+            return getattr(font, "size", 32)
 
     for place, player in enumerate(players, start=1):
         y = start_y + (place - 1) * (row_h + row_gap)
@@ -690,8 +679,8 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
         username = format_username(player.get("username"), display_name)
 
         rank_raw = str(player.get("rank") or "Unranked").strip()
-        wins     = int(player.get("wins", 0))
-        matches  = int(player.get("matches", 0))
+        wins = int(player.get("wins", 0))
+        matches = int(player.get("matches", 0))
 
         winrate = round((wins / matches) * 100, 1) if matches > 0 else 0
         winrate_s = (f"{winrate:.1f}").rstrip("0").rstrip(".")
@@ -699,42 +688,23 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
         c = _place_color(place)
 
         # фон строки
+        row_left = 54
+        row_right = image.width - 54
         draw.rounded_rectangle(
             (row_left, y - 6, row_right, y + row_h),
             radius=16,
-            fill=(0, 0, 0, 140),
-            outline=(255, 255, 255, 40),
+            fill=(0, 0, 0, 100),
+            outline=(255, 255, 255, 24),
             width=2
         )
 
-        # Valentine сердечко (лёгкое, не мешает)
-        if is_valentine:
-            heart_font = get_symbol_font(28)
-            hx = random.randint(row_left + 12, row_right - 32)
-            hy = y - 12
-            # лучше через _draw_text — будет читаемо
-            _draw_text(draw, (hx, hy), "♥", heart_font, fill=(255, 90, 160, 120), stroke=2)
+        _draw_text(draw, (number_x, y + (row_h - _text_h(f"{place}.", num_font)) // 2 - 2), f"{place}.", num_font,
+                   fill=c, stroke=2)
 
-        # ---- правый блок (иконка + "wins|winrate") ----
-        stats_text = f"{wins}W | {winrate_s}%"
-        stats_w = draw.textlength(stats_text, font=stat_font)
-
-        # фиксируем правый край и считаем всё от него
-        stats_right = CONTENT_RIGHT - 24
-        wins_x = int(stats_right - stats_w)
-
-        rank_icon_x = wins_x - 24 - icon_size  # иконка левее статистики
-
-        # ---- номер ----
-        num_text = f"{place}."
-        num_y = y + (row_h - _text_h(num_text, num_font)) // 2 - 2
-        _draw_text(draw, (number_x, num_y), num_text, num_font, fill=c, stroke=2)
-
-        # ---- ник (влезает до иконки) ----
-        name_max_w = (rank_icon_x - 22) - name_x
+        name_max_w = (rank_icon_x - 24) - name_x
         name_font = _fit_font(draw, username, name_max_w, start=40, min_size=26)
-        name_y = y + (row_h - _text_h(username, name_font)) // 2 - 2
-        _draw_text(draw, (name_x, name_y), username, name_font, fill=c, stroke=2)
+        _draw_text(draw, (name_x, y + (row_h - _text_h(username, name_font)) // 2 - 2), username, name_font, fill=c,
+                   stroke=2)
 
         # ---- иконка ранга ----
         icon_path = get_icon_path(rank_raw)
@@ -747,8 +717,7 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
                 pass
 
         # ---- статистика справа ----
-        stat_y = y + (row_h - _text_h("0W | 0%", stat_font)) // 2 - 2
-        _draw_text(draw, (wins_x, stat_y), stats_text, stat_font, fill="white", stroke=2)
+        _draw_text(draw, (wins_x, y + (row_h - _text_h("0W | 0%", stat_font)) // 2 - 2), f"{wins}W | {winrate_s}%", stat_font, fill="white", stroke=2)
 
     image.save(output_path)
     return output_path
