@@ -248,6 +248,8 @@ class Draft:
                     "team_1": self.team_sides.get(self.captains[0].id),
                     "team_2": self.team_sides.get(self.captains[1].id),
                 },
+                "mode": getattr(self.lobby, "mode", "5x5"),
+                "lobby_name": getattr(self.lobby, "name", None),
             }
 
             match_data = await api_client.create_match(match_payload)
