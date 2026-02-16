@@ -4,6 +4,224 @@ from functools import lru_cache
 import re
 from io import BytesIO
 import random
+from datetime import datetime
+import os
+
+
+# ---------- Themes registry (профиль/лидерборд) ----------
+THEMES: dict[str, dict] = {
+    "default": {
+        "accent": (255, 170, 60, 255),
+        "panel_fill": (0, 0, 0, 120),
+        "panel_out": (255, 255, 255, 35),
+    },
+    "valentine": {
+        "accent": (255, 90, 160, 255),
+        "panel_fill": (0, 0, 0, 120),
+        "panel_out": (255, 255, 255, 35),
+    },
+    "new_year": {
+        "accent": (180, 230, 255, 255),
+        "panel_fill": (0, 0, 0, 120),
+        "panel_out": (255, 255, 255, 35),
+    },
+    "halloween": {
+        "accent": (255, 148, 59, 255),
+        "panel_fill": (0, 0, 0, 120),
+        "panel_out": (255, 255, 255, 35),
+    },
+}
+
+def resolve_theme_key(theme: str | None) -> str:
+    key = (theme or "default").strip().lower()
+
+    if key in {"auto", "seasonal"}:
+        key = _seasonal_theme_key()
+
+    return key if key in THEMES else "default"
+
+def _seasonal_theme_key() -> str:
+    d = datetime.utcnow().date()
+    md = (d.month, d.day)
+
+    # окна можно менять как угодно
+    if (12, 24) <= md or md <= (1, 10):
+        return "new_year"
+    if (10, 20) <= md <= (11, 5):
+        return "halloween"
+    if (2, 10) <= md <= (2, 16):
+        return "valentine"
+    return "default"
+
+def get_theme_cfg(theme: str | None) -> dict:
+    return THEMES[resolve_theme_key(theme)]
+
+
+def _rect_intersects(a, b) -> bool:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    return not (ax2 <= bx1 or ax1 >= bx2 or ay2 <= by1 or ay1 >= by2)
+
+def _make_heart_sprite(size: int, color_rgba: tuple[int, int, int, int]) -> Image.Image:
+    """
+    Аккуратное сердечко как RGBA-спрайт.
+    """
+    size = max(12, int(size))
+    s = size
+    spr = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    d = ImageDraw.Draw(spr)
+
+    r = int(s * 0.28)
+    cx1, cy = int(s * 0.35), int(s * 0.28)
+    cx2 = int(s * 0.65)
+
+    d.ellipse((cx1 - r, cy - r, cx1 + r, cy + r), fill=color_rgba)
+    d.ellipse((cx2 - r, cy - r, cx2 + r, cy + r), fill=color_rgba)
+
+    top_y = cy + int(r * 0.45)
+    d.polygon(
+        [(int(s * 0.10), top_y), (int(s * 0.90), top_y), (s // 2, int(s * 0.95))],
+        fill=color_rgba
+    )
+    return spr
+
+def _make_text_sprite(symbol: str, size: int,
+                      fill: tuple[int, int, int, int],
+                      stroke_fill: tuple[int, int, int, int],
+                      stroke_width: int) -> Image.Image:
+    """
+    Рендерит символ в RGBA-спрайт (чтобы можно было вращать и paste).
+    """
+    size = max(12, int(size))
+    font = get_font(size)
+
+    canvas = Image.new("RGBA", (size * 3, size * 3), (0, 0, 0, 0))
+    d = ImageDraw.Draw(canvas)
+
+    bbox = d.textbbox((0, 0), symbol, font=font, stroke_width=stroke_width)
+    w = bbox[2] - bbox[0]
+    h = bbox[3] - bbox[1]
+
+    x = (canvas.size[0] - w) // 2 - bbox[0]
+    y = (canvas.size[1] - h) // 2 - bbox[1]
+
+    d.text((x, y), symbol, font=font, fill=fill, stroke_fill=stroke_fill, stroke_width=stroke_width)
+
+    bb = canvas.getbbox()
+    if not bb:
+        return canvas
+
+    pad = 6
+    x1 = max(0, bb[0] - pad)
+    y1 = max(0, bb[1] - pad)
+    x2 = min(canvas.size[0], bb[2] + pad)
+    y2 = min(canvas.size[1], bb[3] + pad)
+    return canvas.crop((x1, y1, x2, y2))
+
+
+def _apply_default_question_marks(
+    img: Image.Image,
+    safe_rects: list[tuple[int, int, int, int]] | None,
+    accent: tuple[int, int, int, int],
+) -> Image.Image:
+    """
+    Default тема: вопросики в случайных местах.
+    """
+    WIDTH, HEIGHT = img.size
+    overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+
+    safe_rects = safe_rects or []
+    count = random.randint(6, 14)
+    tries = 0
+    placed = 0
+
+    while placed < count and tries < 350:
+        tries += 1
+
+        size = random.randint(22, 54)
+        angle = random.randint(-28, 28)
+        alpha = random.randint(80, 150)
+
+        fill = (255, 255, 255, alpha)
+        stroke = (accent[0], accent[1], accent[2], min(255, alpha + 70))
+        sw = max(2, size // 10)
+
+        spr = _make_text_sprite("?", size, fill=fill, stroke_fill=stroke, stroke_width=sw)
+        spr = spr.rotate(angle, resample=Image.BICUBIC, expand=True)
+
+        w, h = spr.size
+        x = random.randint(10, max(10, WIDTH - w - 10))
+        y = random.randint(10, max(10, HEIGHT - h - 10))
+        rect = (x, y, x + w, y + h)
+
+        if any(_rect_intersects(rect, r) for r in safe_rects):
+            continue
+
+        overlay.paste(spr, (x, y), spr)
+        placed += 1
+
+    return Image.alpha_composite(img, overlay)
+
+
+def _apply_valentine_hearts(img: Image.Image, safe_rects: list[tuple[int, int, int, int]] | None) -> Image.Image:
+    """
+    Сердечки по краям/в пустых местах, рандомно.
+    safe_rects — зоны, куда нельзя залезать (контент).
+    """
+    WIDTH, HEIGHT = img.size
+    overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+
+    safe_rects = safe_rects or []
+    count = random.randint(6, 14)
+    tries = 0
+    placed = 0
+
+    while placed < count and tries < 300:
+        tries += 1
+
+        size = random.randint(22, 54)
+        angle = random.randint(-28, 28)
+        alpha = random.randint(90, 170)
+
+        inner = (255, 90, 160, alpha)
+        outer = (255, 90, 160, min(255, alpha + 40))
+
+        heart_out = _make_heart_sprite(size + 6, outer).rotate(angle, resample=Image.BICUBIC, expand=True)
+        heart_in  = _make_heart_sprite(size, inner).rotate(angle, resample=Image.BICUBIC, expand=True)
+
+        w, h = heart_out.size
+        x = random.randint(10, max(10, WIDTH - w - 10))
+        y = random.randint(10, max(10, HEIGHT - h - 10))
+        rect = (x, y, x + w, y + h)
+
+        if any(_rect_intersects(rect, r) for r in safe_rects):
+            continue
+
+        overlay.paste(heart_out, (x, y), heart_out)
+
+        ix = x + (heart_out.size[0] - heart_in.size[0]) // 2
+        iy = y + (heart_out.size[1] - heart_in.size[1]) // 2
+        overlay.paste(heart_in, (ix, iy), heart_in)
+
+        placed += 1
+
+    return Image.alpha_composite(img, overlay)
+
+
+def apply_theme_overlay(
+    img: Image.Image,
+    theme: str | None,
+    safe_rects: list[tuple[int, int, int, int]] | None = None
+) -> Image.Image:
+    key = resolve_theme_key(theme)
+
+    if key == "valentine":
+        return _apply_valentine_hearts(img, safe_rects)
+
+    # default (и всё неизвестное, т.к. resolve_theme_key вернёт default)
+    accent = get_theme_cfg(key)["accent"]
+    return _apply_default_question_marks(img, safe_rects, accent=accent)
+
 
 
 # Пути к файлам
@@ -185,6 +403,14 @@ def _fit_font(draw: ImageDraw.ImageDraw, text: str, max_px: int, start: int, min
 def _draw_text(draw: ImageDraw.ImageDraw, xy: tuple[int, int], text: str, font, fill="white", stroke: int = 2):
     """Рисует текст с тонкой чёрной обводкой для контраста."""
     draw.text(xy, text, font=font, fill=fill, stroke_width=stroke, stroke_fill=(0, 0, 0, 220))
+
+# Theme overlays (profile card)
+def _rect_intersects(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    return not (ax2 <= bx1 or ax1 >= bx2 or ay2 <= by1 or ay1 >= by2)
+
+
 
 def _rank_icon_path(rank: str) -> Path | None:
     """Находим файл иконки ранга по префиксу (без учёта регистра)."""
@@ -646,11 +872,12 @@ def generate_final_match_image(
     return out_path
 
 
-def generate_leaderboard_image(players: list[dict]) -> Path:
+def generate_leaderboard_image(players: list[dict], theme: str = "default") -> Path:
     base_path = Path(__file__).resolve().parents[1] / "pictures" / "leaderboard.png"
     output_path = Path(__file__).resolve().parents[1] / "pictures" / "leaderboard_dynamic.png"
     image = Image.open(base_path).convert("RGBA")
     draw = ImageDraw.Draw(image)
+    cfg = get_theme_cfg(theme)
 
     num_font = get_font(42)
     stat_font = get_font(36)
@@ -719,6 +946,24 @@ def generate_leaderboard_image(players: list[dict]) -> Path:
         # ---- статистика справа ----
         _draw_text(draw, (wins_x, y + (row_h - _text_h("0W | 0%", stat_font)) // 2 - 2), f"{wins}W | {winrate_s}%", stat_font, fill="white", stroke=2)
 
+    try:
+        # защищаем основной блок таблицы, чтобы сердечки не лезли на строки
+        row_left = 54
+        row_right = image.width - 54
+        start_y = 170
+        row_h = 86
+        row_gap = 10
+        last_y = start_y + (len(players) - 1) * (row_h + row_gap)
+
+        safe_rects = [
+            (0, 0, image.width, 160),
+            (row_left - 10, start_y - 10, row_right + 10, last_y + row_h + 10),
+        ]
+        image = apply_theme_overlay(image, theme, safe_rects=safe_rects)
+        draw = ImageDraw.Draw(image)
+    except Exception:
+        pass
+
     image.save(output_path)
     return output_path
 
@@ -773,21 +1018,8 @@ def generate_profile_card(
     except Exception:
         pass
 
-
     # ---------- стиль ----------
-    THEMES = {
-        "default": {
-            "accent": (255, 170, 60, 255),
-            "panel_fill": (0, 0, 0, 120),
-            "panel_out": (255, 255, 255, 35),
-        },
-        "valentine": {
-            "accent": (255, 90, 160, 255),
-            "panel_fill": (0, 0, 0, 120),
-            "panel_out": (255, 255, 255, 35),
-        }
-    }
-    cfg = THEMES.get((theme or "default").lower(), THEMES["default"])
+    cfg = get_theme_cfg(theme)
 
     ACCENT = cfg["accent"]
     PANEL_FILL = cfg["panel_fill"]
@@ -979,100 +1211,18 @@ def generate_profile_card(
     bw = draw.textlength(big, font=value_font_big)
     _draw_text(draw, (icx - int(bw) // 2, wins_value_y), big, value_font_big, fill="white", stroke=4)
 
-    # ---------- Valentine overlay ----------
-    def _make_heart_sprite(size: int, color_rgba: tuple[int, int, int, int]) -> Image.Image:
-        """
-        Генерирует аккуратное сердечко как RGBA-спрайт (без кривых краёв).
-        """
-        size = max(12, int(size))
-        s = size
-        spr = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-        d = ImageDraw.Draw(spr)
-
-        # параметры сердца внутри квадрата s×s
-        r = int(s * 0.28)  # радиус верхних "половинок"
-        cx1, cy = int(s * 0.35), int(s * 0.28)
-        cx2 = int(s * 0.65)
-
-        # два круга
-        d.ellipse((cx1 - r, cy - r, cx1 + r, cy + r), fill=color_rgba)
-        d.ellipse((cx2 - r, cy - r, cx2 + r, cy + r), fill=color_rgba)
-
-        # нижний треугольник (точно влезает)
-        top_y = cy + int(r * 0.45)
-        d.polygon(
-            [(int(s * 0.10), top_y), (int(s * 0.90), top_y), (s // 2, int(s * 0.95))],
-            fill=color_rgba
-        )
-
-        return spr
-
-    def _rect_intersects(a, b) -> bool:
-        ax1, ay1, ax2, ay2 = a
-        bx1, by1, bx2, by2 = b
-        return not (ax2 <= bx1 or ax1 >= bx2 or ay2 <= by1 or ay1 >= by2)
-
-    if (theme or "").lower() == "valentine":
-        try:
-            overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-
-            # "опасные" зоны: заголовок+линия, и три панели (чтобы сердца не лезли на контент)
-            safe_rects = [
-                (0, 0, WIDTH, 165),  # заголовок
-                (left_x1 - 8, left_y1 - 8, left_x2 + 8, left_y2 + 8),
-                (mid_x1 - 8, mid_y1 - 8, mid_x2 + 8, mid_y2 + 8),
-                (right_x1 - 8, right_y1 - 8, right_x2 + 8, right_y2 + 8),
-            ]
-
-            # рандом: количество / размеры / поворот / прозрачность
-            count = random.randint(6, 14)
-            tries = 0
-            placed = 0
-
-            while placed < count and tries < 300:
-                tries += 1
-
-                size = random.randint(22, 54)
-                angle = random.randint(-28, 28)
-                alpha = random.randint(90, 170)
-
-                # цвет под Valentine
-                inner = (255, 90, 160, alpha)
-                outer = (255, 90, 160, min(255, alpha + 40))
-
-                # делаем спрайт + "обводку" (чуть больше)
-                heart_out = _make_heart_sprite(size + 6, outer)
-                heart_in = _make_heart_sprite(size, inner)
-
-                # поворот
-                heart_out = heart_out.rotate(angle, resample=Image.BICUBIC, expand=True)
-                heart_in = heart_in.rotate(angle, resample=Image.BICUBIC, expand=True)
-
-                w, h = heart_out.size
-
-                # случайная позиция по холсту
-                x = random.randint(10, max(10, WIDTH - w - 10))
-                y = random.randint(10, max(10, HEIGHT - h - 10))
-
-                heart_rect = (x, y, x + w, y + h)
-
-                # не пересекать safe-зоны
-                if any(_rect_intersects(heart_rect, r) for r in safe_rects):
-                    continue
-
-                # пастим: сначала обводку, потом внутрь по центру
-                overlay.paste(heart_out, (x, y), heart_out)
-
-                ix = x + (heart_out.size[0] - heart_in.size[0]) // 2
-                iy = y + (heart_out.size[1] - heart_in.size[1]) // 2
-                overlay.paste(heart_in, (ix, iy), heart_in)
-
-                placed += 1
-
-            img = Image.alpha_composite(img, overlay)
-            draw = ImageDraw.Draw(img)
-        except Exception:
-            pass
+    # ---------- Theme overlay (seasonal) ----------
+    try:
+        safe_rects = [
+            (0, 0, WIDTH, 165),  # заголовок
+            (left_x1 - 8, left_y1 - 8, left_x2 + 8, left_y2 + 8),
+            (mid_x1 - 8, mid_y1 - 8, mid_x2 + 8, mid_y2 + 8),
+            (right_x1 - 8, right_y1 - 8, right_x2 + 8, right_y2 + 8),
+        ]
+        img = apply_theme_overlay(img, theme, safe_rects=safe_rects)
+        draw = ImageDraw.Draw(img)
+    except Exception:
+        pass
 
     img.save(out_path)
     return out_path

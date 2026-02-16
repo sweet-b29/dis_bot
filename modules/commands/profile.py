@@ -235,8 +235,6 @@ async def send_profile_card(interaction: discord.Interaction, edit: bool = False
     except Exception:
         avatar_bytes = None
 
-    theme = os.getenv("PROFILE_THEME", "default")
-
     win_streak = (profile or {}).get("win_streak")
     try:
         win_streak = int(win_streak) if win_streak is not None else None
@@ -246,6 +244,7 @@ async def send_profile_card(interaction: discord.Interaction, edit: bool = False
     favorite_map = (profile or {}).get("favorite_map")
     favorite_map = str(favorite_map).strip() if favorite_map else None
 
+    theme = (profile or {}).get("profile_theme") or os.getenv("PROFILE_THEME", "default")
 
     # генерим картинку
     out_path = generate_profile_card(

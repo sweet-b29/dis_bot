@@ -2,6 +2,41 @@ from django import forms
 from django.contrib import admin
 from django.utils.safestring import mark_safe
 from .models import Match, MatchEvent
+import csv
+from django.http import HttpResponse
+from django.utils import timezone
+
+def export_matches_csv(modeladmin, request, queryset):
+    response = HttpResponse(content_type="text/csv; charset=utf-8")
+    filename = timezone.now().strftime("matches_%Y-%m-%d_%H-%M.csv")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+    writer = csv.writer(response)
+    writer.writerow([
+        "id", "created_at", "mode", "lobby_name", "map_name", "winner_team",
+        "captain_1", "captain_2", "team_1_ids", "team_2_ids"
+    ])
+
+    # prefetch чтобы не было N+1
+    queryset = queryset.select_related("captain_1", "captain_2").prefetch_related("team_1", "team_2")
+
+    for m in queryset:
+        writer.writerow([
+            m.id,
+            m.created_at.isoformat(),
+            getattr(m, "mode", ""),
+            getattr(m, "lobby_name", "") or "",
+            m.map_name or "",
+            m.winner_team or "",
+            getattr(m.captain_1, "username", "") or m.captain_1_id,
+            getattr(m.captain_2, "username", "") or m.captain_2_id,
+            ",".join(str(x) for x in m.team_1.values_list("id", flat=True)),
+            ",".join(str(x) for x in m.team_2.values_list("id", flat=True)),
+        ])
+
+    return response
+
+export_matches_csv.short_description = "Export selected matches to CSV"
 
 # ----- форма c запретом дублей игрока в обеих командах -----
 class MatchAdminForm(forms.ModelForm):
@@ -36,6 +71,7 @@ class MatchAdmin(admin.ModelAdmin):
     date_hierarchy = "created_at"
     inlines = (MatchEventInline,)
     readonly_fields = ("created_at",)
+    actions = [export_matches_csv]
 
 # ----- регистрация событий -----
 @admin.register(MatchEvent)
