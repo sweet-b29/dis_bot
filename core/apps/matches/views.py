@@ -1,27 +1,34 @@
 import logging
-from rest_framework import viewsets
-from .models import Match, MatchEvent
-from .serializers import MatchSerializer, SetWinnerSerializer
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework import status
 from django.db import transaction
 from django.db.models import F
+from django.utils import timezone
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
+from .models import Match, MatchEvent
+from .serializers import MatchSerializer, SetWinnerSerializer
 
 logger = logging.getLogger(__name__)
 
+
 def log_match_event(match: Match, event_type: str, actor=None, **data):
-    """Безопасная запись события в журнал (ошибка не ломает основной поток)."""
     try:
         MatchEvent.objects.create(match=match, type=event_type, actor=actor, data=data or {})
     except Exception:
         logger.exception("Failed to write MatchEvent")
 
+
 class MatchViewSet(viewsets.ModelViewSet):
-    queryset = Match.objects.all().order_by('-created_at')
+    queryset = Match.objects.all().order_by("-created_at")
     serializer_class = MatchSerializer
 
     def create(self, request, *args, **kwargs):
+        """
+        Идемпотентное создание:
+        если external_id уже существует — возвращаем существующий матч (200),
+        иначе создаём новый (201).
+        """
         external_id = request.data.get("external_id")
         if external_id:
             existing = Match.objects.filter(external_id=external_id).first()
@@ -32,7 +39,7 @@ class MatchViewSet(viewsets.ModelViewSet):
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
-        match = serializer.save()
+        match: Match = serializer.save()
 
         if match.captain_1_id:
             match.team_1.add(match.captain_1_id)
@@ -40,18 +47,24 @@ class MatchViewSet(viewsets.ModelViewSet):
             match.team_2.add(match.captain_2_id)
 
         actor = self.request.user if self.request.user.is_authenticated else None
-        log_match_event(match, MatchEvent.Type.CREATED, actor=actor, map=match.map_name)
+        log_match_event(
+            match,
+            MatchEvent.Type.CREATED,
+            actor=actor,
+            map=match.map_name,
+            mode=match.mode,
+            lobby_id=match.lobby_id,
+            lobby_name=match.lobby_name,
+        )
 
-    @action(detail=True, methods=['post'])
     @action(detail=True, methods=["post"])
     def set_winner(self, request, pk=None):
-        match = self.get_object()
+        match: Match = self.get_object()
 
-        # уже установлен победитель — запрещаем повтор
-        if match.winner_team is not None:
+        # уже завершён/победитель есть — запрещаем повтор
+        if match.winner_team is not None or match.status == Match.Status.FINISHED:
             return Response({"detail": "Winner already set"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # валидируем тело запроса (winner_team: 1 или 2)
         ser = SetWinnerSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         winner = ser.validated_data["winner_team"]
@@ -59,12 +72,6 @@ class MatchViewSet(viewsets.ModelViewSet):
         # составы команд
         team1_ids = set(match.team_1.values_list("id", flat=True))
         team2_ids = set(match.team_2.values_list("id", flat=True))
-
-        # капитаны тоже считаются участниками (на случай если их не добавляют в M2M)
-        if getattr(match, "captain_1_id", None):
-            team1_ids.add(match.captain_1_id)
-        if getattr(match, "captain_2_id", None):
-            team2_ids.add(match.captain_2_id)
 
         if not team1_ids or not team2_ids:
             return Response({"detail": "Both teams must have players"}, status=status.HTTP_400_BAD_REQUEST)
@@ -80,10 +87,12 @@ class MatchViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             match.winner_team = winner
-            match.save(update_fields=["winner_team"])
+            match.status = Match.Status.FINISHED
+            match.finished_at = timezone.now()
+            match.save(update_fields=["winner_team", "status", "finished_at"])
 
-            # ✅ стата/лидерборд ТОЛЬКО для 5x5
-            if match.mode == "5x5":
+            #стата/лидерборд ТОЛЬКО для 5x5
+            if match.mode == Match.Mode.M5:
                 Player = match.team_1.model
 
                 if winners_ids:
@@ -96,8 +105,7 @@ class MatchViewSet(viewsets.ModelViewSet):
                         matches=F("matches") + 1,
                     )
 
-            # лог события (используй твой safe-хелпер)
             actor = request.user if request.user.is_authenticated else None
-            log_match_event(match, "win_set", actor=actor, winner_team=winner)
+            log_match_event(match, MatchEvent.Type.WIN_SET, actor=actor, winner_team=winner)
 
         return Response({"status": "ok"}, status=status.HTTP_200_OK)

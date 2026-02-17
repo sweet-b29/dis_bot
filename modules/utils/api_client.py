@@ -136,18 +136,17 @@ async def get_top10_players():
 
 # --- Matches ---
 
-async def create_match(payload: dict):
+async def create_match(payload: dict) -> dict:
     async with await _request("POST", "matches/", json=payload) as resp:
-        text = await resp.text()
-        if resp.status != 201:
-            logger.error(f"Ошибка при создании матча: {resp.status} - {text}")
-        else:
-            logger.success(f"Матч успешно создан: {text}")
-        try:
-            return json.loads(text)
-        except Exception as e:
-            logger.error(f"❌ Ошибка при разборе JSON: {e}")
+        data = await _safe_json(resp)
+
+        if resp.status not in (200, 201):
+            logger.error(f"Ошибка при создании матча: {resp.status} - {data}")
             return {}
+
+        logger.success(f"Матч создан/получен: id={data.get('id')} status={resp.status}")
+        return data
+
 
 async def get_all_matches():
     async with await _request("GET", "matches/") as resp:

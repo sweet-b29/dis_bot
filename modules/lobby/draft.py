@@ -241,10 +241,13 @@ class Draft:
 
             # Если кого-то нет — выходим
             if not captain_1_id or not captain_2_id or \
-               len(team_1_ids) != len(self.teams[self.captains[0]]) or \
-               len(team_2_ids) != len(self.teams[self.captains[1]]):
+                    len(team_1_ids) != len(self.teams[self.captains[0]]) or \
+                    len(team_2_ids) != len(self.teams[self.captains[1]]):
+                self._match_created = False
                 await self.channel.send("⏸ Сохранение матча остановлено — не у всех игроков есть профиль.")
                 return
+
+            self._match_created = True
 
             match_payload = {
                 "captain_1": captain_1_id,
@@ -258,6 +261,7 @@ class Draft:
                 },
                 "mode": getattr(self.lobby, "mode", "5x5"),
                 "lobby_name": getattr(self.lobby, "name", None),
+                "lobby_id": getattr(self.lobby, "lobby_id", None),
                 "external_id": getattr(self.lobby, "external_id", None),
             }
 
@@ -273,6 +277,7 @@ class Draft:
 
             logger.success(f"Матч сохранён в Django: {match_data}")
         except Exception as e:
+            self._match_created = False
             logger.error(f"Ошибка при сохранении матча в Django: {e}")
             await self.channel.send("❌ Не удалось сохранить матч. Логи отправлены в консоль.")
 

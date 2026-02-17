@@ -227,6 +227,8 @@ class Lobby:
         self.message = None
         self.view = None
         self.mode = mode
+        Lobby.count += 1
+        self.lobby_id = Lobby.count
         LOBBY_COUNTERS[mode] += 1
         self.guild = guild
         self.members: list[discord.Member] = []
@@ -440,8 +442,20 @@ class Lobby:
 
             await self.start_draft()
 
-            await asyncio.sleep(1200) #Переставить потом на 1200
-            await self.channel.send("⚔ Капитаны, подтвердите победу, нажав на кнопку ниже:", view=WinButtonView(self))
+            await asyncio.sleep(1200)
+
+            # ✅ если матч не создался — не показываем кнопки победы
+            if not await self._wait_match_id(timeout=60.0):
+                await self.channel.send(
+                    "⚠ Матч не создан (нет match_id). Победу сейчас зафиксировать нельзя. "
+                    "Проверьте, что у всех есть профиль и API доступен."
+                )
+                return
+
+            await self.channel.send(
+                "⚔ Капитаны, подтвердите победу, нажав на кнопку ниже:",
+                view=WinButtonView(self)
+            )
 
         except Exception as e:
             logger.error(f"Ошибка при закрытии лобби: {e}")
