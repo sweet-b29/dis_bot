@@ -13,7 +13,7 @@ from modules.utils.api_client import is_banned, get_leaderboard_top
 from modules.utils.utils import render_ban_message
 from modules.utils.rank_sync import riot_id_is_valid
 from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
-
+import uuid
 from modules.utils.rank_sync import ensure_fresh_rank
 
 LOBBY_COUNTERS = {
@@ -240,6 +240,7 @@ class Lobby:
         self.max_players = max_players
         self.image_message: discord.Message | None = None
         self._win_lock = asyncio.Lock()
+        self.external_id = str(uuid.uuid4())
 
     async def _wait_match_id(self, timeout: float = 60.0) -> bool:
         step = 0.2

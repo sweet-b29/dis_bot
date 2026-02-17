@@ -21,8 +21,24 @@ class MatchViewSet(viewsets.ModelViewSet):
     queryset = Match.objects.all().order_by('-created_at')
     serializer_class = MatchSerializer
 
+    def create(self, request, *args, **kwargs):
+        external_id = request.data.get("external_id")
+        if external_id:
+            existing = Match.objects.filter(external_id=external_id).first()
+            if existing:
+                ser = self.get_serializer(existing)
+                return Response(ser.data, status=status.HTTP_200_OK)
+
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         match = serializer.save()
+
+        if match.captain_1_id:
+            match.team_1.add(match.captain_1_id)
+        if match.captain_2_id:
+            match.team_2.add(match.captain_2_id)
+
         actor = self.request.user if self.request.user.is_authenticated else None
         log_match_event(match, MatchEvent.Type.CREATED, actor=actor, map=match.map_name)
 

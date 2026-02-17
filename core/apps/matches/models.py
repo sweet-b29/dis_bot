@@ -1,6 +1,7 @@
 from django.db import models
 from django.conf import settings
 from apps.players.models import Player
+import uuid
 
 class Match(models.Model):
     class Mode(models.TextChoices):
@@ -8,6 +9,15 @@ class Match(models.Model):
         M3 = "3x3", "3x3"
         M4 = "4x4", "4x4"
         M5 = "5x5", "5x5"
+
+    external_id = models.UUIDField(
+        null=True,
+        blank=True,
+        unique=True,
+        db_index=True,
+        default=None,
+        verbose_name="External id (bot)",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
     captain_1 = models.ForeignKey(Player, related_name='matches_as_captain1', on_delete=models.CASCADE)

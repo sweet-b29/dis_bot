@@ -49,8 +49,11 @@ class Draft:
         self.voice_channels = []
         self.team_sides = {}
         self.lobby = lobby
-        self.map_message: discord.Message | None = None  # сообщение с картинкой бана
-        self.last_banned_by: discord.Member | None = None  # кто банил последним
+        self.map_message: discord.Message | None = None
+        self.last_banned_by: discord.Member | None = None
+        self._finalize_lock = asyncio.Lock()
+        self._match_created = False
+        self.match_id = None
 
     async def _ask_pick_side(self, chooser: discord.Member):
         self.current_captain = chooser
@@ -202,6 +205,11 @@ class Draft:
         logger.info(f"Финальная карта: {self.selected_map}")
 
     async def finalize_match(self):
+        async with self._finalize_lock:
+            if self._match_created or self.match_id:
+                logger.warning("finalize_match skipped: match already created")
+                return
+            self._match_created = True
         """Сохраняем матч в Django. Перед этим валидируем профили всех участников."""
         try:
             async def require_id(member: discord.Member) -> int | None:
@@ -250,11 +258,19 @@ class Draft:
                 },
                 "mode": getattr(self.lobby, "mode", "5x5"),
                 "lobby_name": getattr(self.lobby, "name", None),
+                "external_id": getattr(self.lobby, "external_id", None),
             }
 
             match_data = await api_client.create_match(match_payload)
-            self.match_id = match_data.get("id")
-            self.lobby.match_id = self.match_id
+            mid = match_data.get("id")
+            if not mid:
+                self._match_created = False
+                await self.channel.send("❌ Матч не создался в Django. Повторите позже.")
+                return
+
+            self.match_id = mid
+            self.lobby.match_id = mid
+
             logger.success(f"Матч сохранён в Django: {match_data}")
         except Exception as e:
             logger.error(f"Ошибка при сохранении матча в Django: {e}")
