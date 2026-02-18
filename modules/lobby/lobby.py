@@ -543,7 +543,7 @@ class Lobby:
 class LobbyRoomCodeModal(discord.ui.Modal, title="Введите код комнаты Valorant"):
     room_code = discord.ui.TextInput(
         label="Код комнаты",
-        placeholder="Например: ABCD12 (как в Valorant Custom Game)",
+        placeholder="Введите код комнаты кастомки",
         max_length=32,
         required=True,
     )
