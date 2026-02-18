@@ -218,6 +218,15 @@ class JoinLobbyButton(View):
         except Exception as e:
             logger.warning(f"⚠ Не удалось обновить embed: {e}")
 
+    @discord.ui.button(label="Код комнаты", style=discord.ButtonStyle.secondary, emoji="🔑")
+    async def code_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        code = (getattr(self.lobby, "room_code", None) or "").strip()
+        if not code:
+            await interaction.response.send_message("⚠ Код комнаты ещё не указан.", ephemeral=True)
+            return
+        await interaction.response.send_message(f"🔑 Код комнаты: `{code}`", ephemeral=True)
+
+
 
 class Lobby:
     count = 0
@@ -243,6 +252,8 @@ class Lobby:
         self.image_message: discord.Message | None = None
         self._win_lock = asyncio.Lock()
         self.external_id = str(uuid.uuid4())
+        self.room_code: str | None = None
+        self.code_message: discord.Message | None = None
 
     async def _wait_match_id(self, timeout: float = 60.0) -> bool:
         step = 0.2
@@ -271,10 +282,37 @@ class Lobby:
                 category=category
             )
 
+            #Код комнаты (если пустой — показываем “—”)
+            code = (self.room_code or "").strip()
+            code_display = code if code else "—"
+
+            #1) Topic канала — всегда виден сверху
+            try:
+                await self.channel.edit(topic=f"🔑 Код комнаты: {code_display} | Режим: {self.mode} | {self.name}")
+            except Exception as e:
+                logger.warning(f"⚠ Не удалось установить topic канала: {e}")
+
+            #2) Закреплённое сообщение с кодом (видно всем)
+            try:
+                self.code_message = await self.channel.send(
+                    f"🔑 **Код комнаты Valorant:** `{code_display}`\n"
+                    f"Как зайти: **VALORANT → Custom Game → Join Game → вставить код**",
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+                try:
+                    await self.code_message.pin(reason="Код комнаты Valorant")
+                except Exception as e:
+                    logger.warning(f"⚠ Не удалось закрепить сообщение с кодом: {e}")
+            except Exception as e:
+                logger.warning(f"⚠ Не удалось отправить сообщение с кодом: {e}")
+
+            #3) Основное сообщение с кнопками + код (на случай если не смотрят topic/pin)
             self.view = JoinLobbyButton(self)
             self.message = await self.channel.send(
-                "Нажмите на кнопку ниже, чтобы присоединиться к лобби.\n",
-                view=self.view
+                f"🔑 Код комнаты: `{code_display}`\n\n"
+                f"Нажмите на кнопку ниже, чтобы присоединиться к лобби.\n",
+                view=self.view,
+                allowed_mentions=discord.AllowedMentions.none(),
             )
 
         except Exception as e:
@@ -502,6 +540,37 @@ class Lobby:
             logger.error(f"❌ Ошибка при удалении текстового канала: {e}")
 
 
+class LobbyRoomCodeModal(discord.ui.Modal, title="Введите код комнаты Valorant"):
+    room_code = discord.ui.TextInput(
+        label="Код комнаты",
+        placeholder="Например: ABCD12 (как в Valorant Custom Game)",
+        max_length=32,
+        required=True,
+    )
+
+    def __init__(self, *, size: int, mode: str, bot: commands.Bot):
+        super().__init__(timeout=300)
+        self.size = size
+        self.mode = mode
+        self.bot = bot
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        code = self.room_code.value.strip()
+
+        category_id = int(os.getenv("LOBBY_CATEGORY_ID", 0))
+        lobby_instance = Lobby(interaction.guild, category_id, max_players=self.size * 2, mode=self.mode)
+        lobby_instance.room_code = code
+
+        await lobby_instance.create_channel()
+
+        await interaction.followup.send(
+            f"✅ Лобби создано: {lobby_instance.channel.mention}\n🔑 Код комнаты: `{code}`",
+            ephemeral=True
+        )
+
+
 class LobbyMenuView(View):
     def __init__(self, bot: commands.Bot):
         super().__init__(timeout=None)
@@ -522,10 +591,8 @@ class LobbySizeButton(discord.ui.Button):
         self.bot = bot
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        category_id = int(os.getenv("LOBBY_CATEGORY_ID", 0))
-        lobby_instance = Lobby(interaction.guild, category_id, max_players=self.size * 2, mode=self.mode)
-        await lobby_instance.create_channel()
+        modal = LobbyRoomCodeModal(size=self.size, mode=self.mode, bot=self.bot)
+        await interaction.response.send_modal(modal)
 
 class ProfileButton(discord.ui.Button):
     def __init__(self):
