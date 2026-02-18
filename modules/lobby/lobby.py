@@ -295,8 +295,7 @@ class Lobby:
             #2) Закреплённое сообщение с кодом (видно всем)
             try:
                 self.code_message = await self.channel.send(
-                    f"🔑 **Код комнаты Valorant:** `{code_display}`\n"
-                    f"Как зайти: **VALORANT → Custom Game → Join Game → вставить код**",
+                    f"🔑 **Код комнаты Valorant:** `{code_display}`\n",
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
                 try:
@@ -566,7 +565,7 @@ class LobbyRoomCodeModal(discord.ui.Modal, title="Введите код комн
         await lobby_instance.create_channel()
 
         await interaction.followup.send(
-            f"✅ Лобби создано: {lobby_instance.channel.mention}\n🔑 Код комнаты: `{code}`",
+            f"Лобби создано: {lobby_instance.channel.mention}\n🔑 Код комнаты: `{code}`",
             ephemeral=True
         )
 
