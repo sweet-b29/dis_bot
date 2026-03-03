@@ -8,6 +8,7 @@ from loguru import logger
 import asyncio
 import time
 import os
+import re
 from modules.utils.image_generator import generate_lobby_image
 from modules.utils.api_client import is_banned, get_leaderboard_top
 from modules.utils.utils import render_ban_message
@@ -22,6 +23,8 @@ LOBBY_COUNTERS = {
     "4x4": 0,
     "5x5": 0
 }
+
+ROOM_CODE_REGEX = re.compile(r'^[A-Z0-9]{6}$')
 
 PRIZES_TEXT = (
     "Призы:\n"
@@ -543,7 +546,7 @@ class LobbyRoomCodeModal(discord.ui.Modal, title="Введите код комн
     room_code = discord.ui.TextInput(
         label="Код комнаты",
         placeholder="Введите код комнаты кастомки",
-        max_length=32,
+        max_length=6,
         required=True,
     )
 
@@ -557,6 +560,13 @@ class LobbyRoomCodeModal(discord.ui.Modal, title="Введите код комн
         await interaction.response.defer(ephemeral=True, thinking=True)
 
         code = self.room_code.value.strip()
+
+        if not ROOM_CODE_REGEX.fullmatch(code):
+            await interaction.followup.send(
+                "❌ Неверный формат кода комнаты.",
+                ephemeral=True,
+            )
+            return
 
         category_id = int(os.getenv("LOBBY_CATEGORY_ID", 0))
         lobby_instance = Lobby(interaction.guild, category_id, max_players=self.size * 2, mode=self.mode)
