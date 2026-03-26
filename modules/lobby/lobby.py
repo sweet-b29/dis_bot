@@ -93,6 +93,14 @@ class JoinLobbyButton(View):
         except discord.InteractionResponded:
             pass
 
+        # блокируем вход в истёкшее лобби
+        if getattr(self.lobby, "expired", False):
+            try:
+                await interaction.followup.send("❌ Лобби истёк и больше недоступно.", ephemeral=True)
+            except Exception:
+                logger.debug("⚠ Не удалось уведомить пользователя об истёкшем лобби.")
+            return
+
         # Берём профиль из кэша (внутри ensure_fresh_rank → Django + HenrikDev)
         try:
             profile = await profiles_cache.get(interaction.user.id)
@@ -257,6 +265,8 @@ class Lobby:
         self.external_id = str(uuid.uuid4())
         self.room_code: str | None = None
         self.code_message: discord.Message | None = None
+        self.created_at = time.time()
+        self.expired = False
 
     async def _wait_match_id(self, timeout: float = 60.0) -> bool:
         step = 0.2
@@ -321,9 +331,79 @@ class Lobby:
             logger.error(f"Ошибка при создании канала лобби: {e}")
 
         logger.info(f"🆕 Создан текстовый канал: {self.channel.name} ({self.channel.id})")
+        # Запускаем фоновую задачу авто-удаления через 3 часа
+        try:
+            asyncio.create_task(self._auto_expire())
+        except Exception:
+            logger.warning("⚠ Не удалось запустить задачу авто-истечения лобби.")
+
+    async def _auto_expire(self, delay: float = 10800.0):
+        """Авто-истечение лобби: через `delay` секунд помечаем лобби как истёкшее
+        и удаляем текстовый канал и сопутствующие голосовые каналы (если созданы).
+        """
+        try:
+            await asyncio.sleep(delay)
+        except Exception:
+            return
+
+        # Если драфт уже стартовал или лобби уже помечено — ничего не делаем
+        if getattr(self, "draft_started", False) or getattr(self, "expired", False):
+            return
+
+        self.expired = True
+
+        try:
+            # Деактивируем кнопки на основном сообщении, если есть
+            try:
+                if self.view:
+                    for item in self.view.children:
+                        if isinstance(item, discord.ui.Button):
+                            item.disabled = True
+                    if self.message:
+                        await self.message.edit(view=self.view)
+            except Exception:
+                logger.debug("⚠ Не удалось отключить кнопки при истечении лобби")
+
+            # Уведомляем канал
+            try:
+                if self.channel:
+                    await self.channel.send("⌛ Лобби не активировалось в течение 3 часов и будет удалено.")
+            except Exception:
+                logger.debug("⚠ Не удалось отправить уведомление об истечении лобби")
+
+            # Удаляем голосовые каналы, если они были созданы в ходе драфта
+            try:
+                if hasattr(self, "draft") and getattr(self.draft, "voice_channels", None):
+                    for vc in list(self.draft.voice_channels):
+                        try:
+                            await vc.delete(reason="Лобби истекло")
+                        except Exception:
+                            logger.debug(f"⚠ Не удалось удалить голосовой канал {vc}")
+            except Exception:
+                logger.debug("⚠ Ошибка при удалении голосовых каналов по истечении")
+
+            # Удаляем текстовый канал
+            try:
+                if self.channel:
+                    await self.channel.delete(reason="Лобби истекло (3 часа ожидания)")
+            except Exception as e:
+                logger.warning(f"❌ Ошибка при удалении текстового канала по истечении: {e}")
+        except Exception as e:
+            logger.error(f"Ошибка в _auto_expire: {e}")
 
     async def add_member(self, interaction: discord.Interaction):
         member = interaction.user
+
+        # не позволяем присоединяться в истёкшее лобби
+        if getattr(self, "expired", False):
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ Лобби истёк и больше недоступно.", ephemeral=True)
+                else:
+                    await interaction.followup.send("❌ Лобби истёк и больше недоступно.", ephemeral=True)
+            except Exception:
+                logger.debug("⚠ Не удалось отправить ответ пользователю об истёкшем лобби.")
+            return
 
         if len(self.members) >= self.max_players:
             await interaction.followup.send(
@@ -537,6 +617,17 @@ class Lobby:
 
         await asyncio.sleep(10)
         try:
+            # удаляем голосовые каналы, если они были созданы
+            try:
+                if hasattr(self, "draft") and getattr(self.draft, "voice_channels", None):
+                    for vc in list(self.draft.voice_channels):
+                        try:
+                            await vc.delete(reason="Лобби завершено и победа зафиксирована.")
+                        except Exception:
+                            logger.debug(f"⚠ Не удалось удалить голосовой канал {vc}")
+            except Exception:
+                logger.debug("⚠ Ошибка при удалении голосовых каналов перед удалением лобби")
+
             await self.channel.delete(reason="Лобби завершено и победа зафиксирована.")
         except Exception as e:
             logger.error(f"❌ Ошибка при удалении текстового канала: {e}")
