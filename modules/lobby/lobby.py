@@ -257,6 +257,9 @@ class Lobby:
         self.external_id = str(uuid.uuid4())
         self.room_code: str | None = None
         self.code_message: discord.Message | None = None
+        self.close_task: asyncio.Task | None = None
+        self.close_at: int | None = None
+        self.close_message: discord.Message | None = None
 
     async def _wait_match_id(self, timeout: float = 60.0) -> bool:
         step = 0.2
@@ -317,10 +320,90 @@ class Lobby:
                 allowed_mentions=discord.AllowedMentions.none(),
             )
 
+            if not self.draft_started:
+                await self.schedule_close(hours=1)
+
         except Exception as e:
             logger.error(f"Ошибка при создании канала лобби: {e}")
 
-        logger.info(f"🆕 Создан текстовый канал: {self.channel.name} ({self.channel.id})")
+        if self.channel:
+            logger.info(f"🆕 Создан текстовый канал: {self.channel.name} ({self.channel.id})")
+
+    async def schedule_close(self, hours: int = 1):
+        """Планирует автоудаление лобби, если драфт не начался."""
+        try:
+            # если прошлый таймер был — отменяем
+            if self.close_task and not self.close_task.done():
+                self.close_task.cancel()
+
+            # если старое сообщение было — удаляем
+            if self.close_message:
+                try:
+                    await self.close_message.delete()
+                except Exception:
+                    pass
+                self.close_message = None
+
+            self.close_at = int(time.time() + hours * 3600)
+            ts_line = f"⏰ Лобби будет закрыто: <t:{self.close_at}:R>"
+
+            if self.channel:
+                try:
+                    self.close_message = await self.channel.send(
+                        ts_line,
+                        allowed_mentions=discord.AllowedMentions.none(),
+                    )
+                except Exception as e:
+                    logger.warning(f"⚠ Не удалось отправить сообщение с таймером закрытия: {e}")
+
+            self.close_task = asyncio.create_task(self._auto_close_countdown(self.close_at))
+
+        except Exception as e:
+            logger.warning(f"⚠ schedule_close failed: {e}")
+
+    async def _auto_close_countdown(self, close_at: int):
+        delay = float(close_at) - time.time()
+
+        if delay > 0:
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                return
+
+        if self.draft_started:
+            return
+
+        if not self.channel or not self.guild.get_channel(self.channel.id):
+            return
+
+        try:
+            await self.channel.send("⏰ Время ожидания истекло — лобби автоматически удаляется.")
+        except Exception:
+            pass
+
+        try:
+            await self.channel.delete(reason="Автоудаление лобби по таймауту (1 час)")
+        except Exception as e:
+            logger.error(f"❌ Не удалось удалить канал лобби по таймауту: {e}")
+
+    async def cancel_scheduled_close(self):
+        try:
+            if self.close_task and not self.close_task.done():
+                self.close_task.cancel()
+        except Exception:
+            pass
+
+        try:
+            if self.close_message:
+                try:
+                    await self.close_message.delete()
+                except Exception:
+                    pass
+                self.close_message = None
+        except Exception:
+            pass
+
+        self.close_at = None
 
     async def add_member(self, interaction: discord.Interaction):
         member = interaction.user
@@ -398,6 +481,7 @@ class Lobby:
 
     async def close_lobby(self):
         self.draft_started = True
+        await self.cancel_scheduled_close()
 
         if len(self.members) < 2:
             await self.channel.send("❌ Недостаточно игроков для драфта. Лобби будет закрыто.")
@@ -477,7 +561,8 @@ class Lobby:
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
 
-            await self.start_draft()
+            self.draft_started = True
+            await self.cancel_scheduled_close()
             asyncio.create_task(self.delayed_win_buttons())
 
         except Exception as e:
@@ -485,6 +570,7 @@ class Lobby:
 
     async def start_draft(self):
         try:
+            await self.cancel_scheduled_close()
             self.draft = Draft(self, self.guild, self.channel, self.captains, self.members)
             await self.draft.start()
         except Exception as e:
