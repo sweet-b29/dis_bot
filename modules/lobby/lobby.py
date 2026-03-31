@@ -563,6 +563,8 @@ class Lobby:
 
             self.draft_started = True
             await self.cancel_scheduled_close()
+
+            await self.start_draft()
             asyncio.create_task(self.delayed_win_buttons())
 
         except Exception as e:
