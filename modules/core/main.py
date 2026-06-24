@@ -2,7 +2,7 @@ import os
 import time
 import sys
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from dotenv import load_dotenv
 from pathlib import Path
 import logging
@@ -28,6 +28,7 @@ intents.voice_states = True
 intents.message_content = True
 
 bot = commands.Bot(command_prefix=".", intents=intents)
+bot.lobby_panel_message = None
 
 def ensure_bot_env():
     missing = []
@@ -62,6 +63,16 @@ async def on_voice_state_update(member, before, after):
             except Exception as e:
                 logger.warning(f"❌ Не удалось удалить голосовой канал {vc.name}: {e}")
 
+@tasks.loop(minutes=1)
+async def refresh_lobby_panel_view():
+    message = getattr(bot, "lobby_panel_message", None)
+    if not message:
+        return
+
+    try:
+        await message.edit(view=LobbyMenuView(bot))
+    except Exception as e:
+        logger.warning(f"⚠ Не удалось обновить панель лобби: {e}")
 
 @bot.event
 async def setup_hook():
@@ -116,10 +127,14 @@ async def setup_hook():
         try:
             channel = await bot.fetch_channel(LOBBY_CHANNEL_ID)
             if channel:
-                file_path = base_dir / "modules" / "pictures" / "Создание лобби.jpg"
+                file_path = base_dir / "modules" / "pictures" / "Создание лобби.png"
                 file = File(fp=file_path, filename="создание_лобби.jpg")
                 view = LobbyMenuView(bot)
-                await channel.send(file=file, view=view)
+                bot.lobby_panel_message = await channel.send(file=file, view=view)
+
+                if not refresh_lobby_panel_view.is_running():
+                    refresh_lobby_panel_view.start()
+
                 logger.success("📨 Отправлена кнопка создания лобби.")
         except Exception as e:
             logger.warning(f"⚠ Ошибка при отправке кнопки лобби: {e}")

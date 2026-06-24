@@ -45,8 +45,8 @@ class PlayerSeasonStat(models.Model):
     season = models.ForeignKey(Season, on_delete=models.CASCADE, related_name="stats")
     discord_id = models.BigIntegerField(db_index=True)
 
-    username = models.CharField(max_length=32)
-    rank = models.CharField(max_length=32, default="Unranked")
+    username = models.CharField(max_length=255)
+    rank = models.CharField(max_length=50, default="Unranked")
 
     wins = models.PositiveIntegerField(default=0)
     matches = models.PositiveIntegerField(default=0)

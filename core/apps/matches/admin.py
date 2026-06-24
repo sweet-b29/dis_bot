@@ -65,8 +65,28 @@ class MatchEventInline(admin.TabularInline):
 @admin.register(Match)
 class MatchAdmin(admin.ModelAdmin):
     form = MatchAdminForm
-    list_display = ("id", "mode", "lobby_name", "map_name", "winner_team", "created_at", "captain_1", "captain_2")
-    list_filter = ("mode", "winner_team", "map_name", "created_at")
+    list_display = (
+        "id",
+        "status",
+        "is_ranked",
+        "mode",
+        "lobby_name",
+        "map_name",
+        "winner_team",
+        "created_at",
+        "finished_at",
+        "captain_1",
+        "captain_2",
+    )
+
+    list_filter = (
+        "status",
+        "is_ranked",
+        "mode",
+        "winner_team",
+        "map_name",
+        "created_at",
+    )
     search_fields = ("id", "lobby_name", "captain_1__username", "captain_2__username")
     date_hierarchy = "created_at"
     inlines = (MatchEventInline,)
