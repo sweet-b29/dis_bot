@@ -53,8 +53,11 @@ class MatchViewSet(viewsets.ModelViewSet):
             actor=actor,
             map=match.map_name,
             mode=match.mode,
+            is_ranked=match.is_ranked,
             lobby_id=match.lobby_id,
             lobby_name=match.lobby_name,
+            discord_guild_id=getattr(match, "discord_guild_id", None),
+            discord_channel_id=getattr(match, "discord_channel_id", None),
         )
 
     @action(detail=True, methods=["post"])
@@ -92,7 +95,7 @@ class MatchViewSet(viewsets.ModelViewSet):
             match.save(update_fields=["winner_team", "status", "finished_at"])
 
             #стата/лидерборд ТОЛЬКО для 5x5
-            if match.mode == Match.Mode.M5:
+            if match.mode == Match.Mode.M5 and match.is_ranked:
                 Player = match.team_1.model
 
                 if winners_ids:

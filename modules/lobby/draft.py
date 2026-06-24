@@ -260,9 +260,12 @@ class Draft:
                     "team_2": self.team_sides.get(self.captains[1].id),
                 },
                 "mode": getattr(self.lobby, "mode", "5x5"),
+                "is_ranked": bool(getattr(self.lobby, "is_ranked", True)),
                 "lobby_name": getattr(self.lobby, "name", None),
                 "lobby_id": getattr(self.lobby, "lobby_id", None),
                 "external_id": getattr(self.lobby, "external_id", None),
+                "discord_guild_id": self.guild.id if self.guild else None,
+                "discord_channel_id": self.channel.id if self.channel else None,
             }
 
             match_data = await api_client.create_match(match_payload)

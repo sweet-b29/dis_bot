@@ -26,6 +26,7 @@ def _parse_role_ids(env_name: str) -> list[int]:
 
 
 ALLOWED_ROLES: list[int] = _parse_role_ids("ALLOWED_ROLES")
+BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0") or "0")
 
 
 def admin_only():
@@ -58,6 +59,18 @@ def admin_only():
             return False
 
         return any(role.id in ALLOWED_ROLES for role in user.roles)
+
+    return app_commands.check(predicate)
+
+def owner_only():
+    """
+    Доступ только владельцу бота по конкретному Discord ID.
+    Используется для опасных команд: закрытие сезона, массовые сбросы.
+    """
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if not BOT_OWNER_ID:
+            return False
+        return interaction.user.id == BOT_OWNER_ID
 
     return app_commands.check(predicate)
 
@@ -168,6 +181,69 @@ class Admin(commands.Cog):
 
         await interaction.followup.send(f"🏆 Победы установлены: {user.mention} → **{wins}**", ephemeral=True)
 
+    @app_commands.command(
+        name="close_season",
+        description="Закрыть сезон: сохранить статистику и обнулить wins/matches"
+    )
+    @app_commands.describe(
+        season_name="Название сезона, например Season 1",
+        confirm="Для выполнения напиши CONFIRM"
+    )
+    @owner_only()
+    async def close_season(
+        self,
+        interaction: discord.Interaction,
+        season_name: str,
+        confirm: str,
+    ):
+        if confirm != "CONFIRM":
+            await interaction.response.send_message(
+                "❌ Закрытие сезона отменено.\n"
+                "Чтобы выполнить сброс, напиши в поле confirm: `CONFIRM`",
+                ephemeral=True,
+            )
+            return
+
+        season_name = season_name.strip()
+
+        if not season_name:
+            await interaction.response.send_message(
+                "❌ Название сезона не может быть пустым.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            result = await api_client.close_season(
+                season_name=season_name,
+                confirm=confirm,
+            )
+        except Exception as e:
+            await interaction.followup.send(
+                f"❌ Не удалось закрыть сезон: `{e}`",
+                ephemeral=True,
+            )
+            return
+
+        if not result.get("ok"):
+            await interaction.followup.send(
+                "❌ Django не закрыл сезон.\n"
+                f"Ответ: `{result}`",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.followup.send(
+            "✅ Сезон закрыт.\n"
+            f"Сезон: **{result.get('season')}**\n"
+            f"Игроков сохранено в историю: **{result.get('captured_players')}**\n"
+            f"Игроков обнулено: **{result.get('reset_players')}**\n\n"
+            "Обнулены только `wins` и `matches`. Ранги и Riot ID не тронуты.",
+            ephemeral=True,
+        )
+
     @app_commands.command(name="ban", description="Забанить игрока по discord_id на время (10m/2h/1d)")
     @app_commands.describe(user="Имя игрока", duration="Длительность: 10m/2h/1d", reason="Причина")
     @admin_only()
@@ -221,6 +297,8 @@ class Admin(commands.Cog):
         )
         embed.add_field(name="/changewins", value="Установить победы игрока", inline=False)
         embed.add_field(name="/ban", value="Бан по discord_id на время", inline=False)
+        embed.add_field(name="/close_season", value="Закрыть сезон и обнулить статистику. Только BOT_OWNER_ID.",
+                        inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 

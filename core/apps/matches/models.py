@@ -19,6 +19,20 @@ class Match(models.Model):
         ABANDONED = "abandoned", "Abandoned"
         CANCELED = "canceled", "Canceled"
 
+    discord_guild_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="Discord Guild ID",
+    )
+
+    discord_channel_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="Discord Channel ID",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
     finished_at = models.DateTimeField(null=True, blank=True, verbose_name="Дата завершения")
 
@@ -41,6 +55,12 @@ class Match(models.Model):
         default=Mode.M5,
         db_index=True,
         verbose_name="Режим лобби",
+    )
+
+    is_ranked = models.BooleanField(
+        default=True,
+        db_index=True,
+        verbose_name="Учитывать матч в статистике",
     )
 
     status = models.CharField(

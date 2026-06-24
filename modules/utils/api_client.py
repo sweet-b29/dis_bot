@@ -134,6 +134,25 @@ async def get_top10_players():
     async with await _request("GET", "players/top10/") as resp:
         return await _safe_json(resp) if resp.status == 200 else []
 
+async def close_season(season_name: str, confirm: str = "CONFIRM") -> dict:
+    payload = {
+        "season_name": season_name,
+        "confirm": confirm,
+    }
+
+    async with await _request("POST", "players/close_season/", json=payload) as resp:
+        data = await _safe_json(resp)
+
+        if resp.status != 200:
+            logger.error(f"❌ close_season failed: {resp.status} - {data}")
+            return {
+                "ok": False,
+                "status": resp.status,
+                "data": data,
+            }
+
+        return data
+
 # --- Matches ---
 
 async def create_match(payload: dict) -> dict:

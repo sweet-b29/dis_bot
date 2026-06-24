@@ -4,8 +4,9 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAdminUser
-from .models import Player, PlayerBan
+from .models import Player, PlayerBan, Season, PlayerSeasonStat
 from .serializers import PlayerSerializer, PlayerBanSerializer
+from django.db import transaction
 from django.db.models import F, FloatField, ExpressionWrapper, Case, When, Value
 
 
@@ -147,14 +148,111 @@ class PlayerViewSet(viewsets.ModelViewSet):
         permission_classes=[IsAdminUser],
     )
     def reset_stats(self, request):
+        """
+        Безопасный ручной сброс статистики.
+
+        Важно:
+        - НЕ трогаем rank;
+        - НЕ трогаем username;
+        - НЕ трогаем rank_last_sync;
+        - НЕ трогаем last_name_change.
+        """
         updated = Player.objects.update(
             wins=0,
             matches=0,
-            rank="Unranked",
-            last_name_change=None,
-            rank_last_sync=None,
         )
         return Response({"ok": True, "updated": updated})
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="close_season",
+        authentication_classes=[TokenAuthentication],
+        permission_classes=[IsAdminUser],
+    )
+    def close_season(self, request):
+        """
+        Закрывает сезон:
+        1. Создаёт Season.
+        2. Архивирует текущую статистику всех игроков в PlayerSeasonStat.
+        3. Обнуляет wins/matches у всех Player.
+        4. НЕ трогает rank/username/discord_id.
+        """
+        season_name = str(request.data.get("season_name") or "").strip()
+        confirm = str(request.data.get("confirm") or "").strip()
+
+        if confirm != "CONFIRM":
+            return Response(
+                {
+                    "ok": False,
+                    "error": "Для закрытия сезона передай confirm='CONFIRM'.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not season_name:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "season_name обязателен.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if Season.objects.filter(name=season_name).exists():
+            return Response(
+                {
+                    "ok": False,
+                    "error": f"Сезон с названием '{season_name}' уже существует.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            season = Season.objects.create(
+                name=season_name,
+                ended_at=timezone.now(),
+            )
+
+            players = list(
+                Player.objects.all().only(
+                    "discord_id",
+                    "username",
+                    "rank",
+                    "wins",
+                    "matches",
+                )
+            )
+
+            season_stats = [
+                PlayerSeasonStat(
+                    season=season,
+                    discord_id=p.discord_id,
+                    username=p.username or "—",
+                    rank=p.rank or "Unranked",
+                    wins=int(p.wins or 0),
+                    matches=int(p.matches or 0),
+                )
+                for p in players
+            ]
+
+            if season_stats:
+                PlayerSeasonStat.objects.bulk_create(season_stats)
+
+            reset_count = Player.objects.update(
+                wins=0,
+                matches=0,
+            )
+
+        return Response(
+            {
+                "ok": True,
+                "season": season.name,
+                "captured_players": len(season_stats),
+                "reset_players": reset_count,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @action(
         detail=False,

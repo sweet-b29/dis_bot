@@ -1,4 +1,4 @@
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from pathlib import Path
 from functools import lru_cache
 import re
@@ -986,243 +986,886 @@ def generate_profile_card(
     favorite_map: str | None = None,
 ) -> Path:
     """
-    Генерирует красивую профиль-карту 1280x720:
-    - фон + панели
-    - круглый аватар
-    - иконка ранга (из твоей папки ranks)
-    - статистика
+    Генерирует летнюю профиль-карту на готовом шаблоне.
+    Основа:
+        modules/pictures/profile_summer_base.png
+
+    Что делает:
+    - использует твой шаблон как базу;
+    - вставляет аватар внутрь готового круга;
+    - рисует премиальную статистику;
+    - рисует улучшенный блок ранга;
+    - добавляет атмосферу и блики поверх фона.
     """
-    WIDTH, HEIGHT = 1280, 720
-    out_path = Path(__file__).resolve().parents[1] / "pictures" / "profile_card_dynamic.png"
+    pictures_dir = Path(__file__).resolve().parents[1] / "pictures"
+    base_path = pictures_dir / "profile_summer_base.png"
+    out_path = pictures_dir / "profile_card_dynamic.png"
 
-    # ---------- базовый фон ----------
-    img = Image.new("RGBA", (WIDTH, HEIGHT), (10, 10, 12, 255))
+    # ---------- Загружаем основу ----------
+    if base_path.exists():
+        img = Image.open(base_path).convert("RGBA")
+    else:
+        img = Image.new("RGBA", (1672, 941), (15, 15, 20, 255))
+
     draw = ImageDraw.Draw(img)
+    W, H = img.size
 
-    # градиент
-    top = (14, 14, 18)
-    bot = (7, 7, 10)
-    for y in range(HEIGHT):
-        t = y / (HEIGHT - 1)
-        r = int(top[0] * (1 - t) + bot[0] * t)
-        g = int(top[1] * (1 - t) + bot[1] * t)
-        b = int(top[2] * (1 - t) + bot[2] * t)
-        draw.line([(0, y), (WIDTH, y)], fill=(r, g, b, 255))
+    # ---------- Данные ----------
+    discord_name = str(discord_name or "Player").strip()
+    riot_username = str(riot_username or "—").strip()
+    rank_raw = str(rank or "Unranked").strip()
 
-    # лёгкий шум
-    try:
-        noise = Image.effect_noise((WIDTH, HEIGHT), 18).convert("L")
-        noise_rgba = Image.merge("RGBA", (noise, noise, noise, noise.point(lambda a: 24)))
-        img = Image.alpha_composite(img, noise_rgba)
-        draw = ImageDraw.Draw(img)
-    except Exception:
-        pass
-
-    # ---------- стиль ----------
-    cfg = get_theme_cfg(theme)
-
-    ACCENT = cfg["accent"]
-    PANEL_FILL = cfg["panel_fill"]
-    PANEL_OUT = cfg["panel_out"]
-
-    title_font = get_font(86)
-    small_font = get_font(34)
-    value_font = get_font(46)
-    name_font = get_font(64)
-
-    # ---------- заголовок ----------
-    _draw_text(draw, (70, 40), "VALORANT", title_font, fill="white", stroke=4)
-    # тонкая линия под заголовком
-    draw.line([(70, 150), (WIDTH - 70, 150)], fill=(255, 255, 255, 35), width=2)
-
-    # ---------- панели ----------
-    # Левая панель (статы) — рамку нарисуем ПОСЛЕ расчёта высоты
-    left_x1, left_y1 = 70, 190
-    left_x2 = 430
-    left_y2 = 630
-
-    # Центральная панель (аватар + ник)
-    mid_x1, mid_y1 = 460, 190
-    mid_x2, mid_y2 = 860, 630
-    draw.rounded_rectangle((mid_x1, mid_y1, mid_x2, mid_y2), radius=26, fill=PANEL_FILL, outline=PANEL_OUT, width=2)
-
-    # Правая панель (ранг)
-    right_x1, right_y1 = 890, 190
-    right_x2, right_y2 = 1210, 630
-    draw.rounded_rectangle((right_x1, right_y1, right_x2, right_y2), radius=26, fill=PANEL_FILL, outline=PANEL_OUT,
-                           width=2)
-
-    # ---------- расчёты ----------
     wins = int(wins or 0)
     matches = int(matches or 0)
-    losses = max(matches - wins, 0)
-    winrate = 0.0 if matches <= 0 else (wins / matches) * 100.0
+    loses = max(matches - wins, 0)
 
-    # ---------- левая панель: статистика ----------
+    if matches <= 0:
+        winrate_text = "—"
+    else:
+        winrate = round((wins / matches) * 100, 1)
+        winrate_text = f"{winrate}%"
+
+    # ---------- Масштаб ----------
+    sx = W / 1672
+    sy = H / 941
+    scale = min(sx, sy)
+
+    def SBOX(box: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+        x1, y1, x2, y2 = box
+        return int(x1 * sx), int(y1 * sy), int(x2 * sx), int(y2 * sy)
+
+    left_panel = SBOX((92, 244, 555, 814))
+    center_panel = SBOX((593, 244, 1108, 814))
+    right_panel = SBOX((1146, 244, 1558, 814))
+
+    # ---------- Вспомогательные функции ----------
+    def text_h(text: str, font) -> int:
+        try:
+            b = draw.textbbox((0, 0), text, font=font)
+            return b[3] - b[1]
+        except Exception:
+            return getattr(font, "size", 32)
+
+    def center_text(
+            text: str,
+            box: tuple[int, int, int, int],
+            font: object,
+            fill: object = (255, 255, 255, 255),
+            stroke_width: int = 2,
+            stroke_fill: object = (0, 0, 0, 220),
+    ) -> None:
+        x1, y1, x2, y2 = box
+        bbox = draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
+        bw = bbox[2] - bbox[0]
+        bh = bbox[3] - bbox[1]
+
+        x = x1 + ((x2 - x1) - bw) // 2 - bbox[0]
+        y = y1 + ((y2 - y1) - bh) // 2 - bbox[1]
+
+        draw.text(
+            (x, y),
+            text,
+            font=font,
+            fill=fill,
+            stroke_width=stroke_width,
+            stroke_fill=stroke_fill,
+        )
+
+    def fit_font(text: str, max_width: int, start_size: int, min_size: int = 24):
+        size = start_size
+        font = get_font(size)
+
+        while draw.textlength(text, font=font) > max_width and size > min_size:
+            size -= 2
+            font = get_font(size)
+
+        return font
+
+    def tracked_center_text(
+        text: str,
+        box: tuple[int, int, int, int],
+        font,
+        tracking: int = 6,
+        fill=(255, 255, 255, 255),
+        stroke_width: int = 2,
+        stroke_fill=(0, 0, 0, 220),
+    ):
+        x1, y1, x2, y2 = box
+        chars = list(text)
+
+        widths = [draw.textlength(ch, font=font) for ch in chars]
+        total_w = int(sum(widths) + tracking * max(0, len(chars) - 1))
+        th = text_h(text, font)
+
+        x = x1 + ((x2 - x1) - total_w) // 2
+        y = y1 + ((y2 - y1) - th) // 2
+
+        for i, ch in enumerate(chars):
+            draw.text(
+                (x, y),
+                ch,
+                font=font,
+                fill=fill,
+                stroke_width=stroke_width,
+                stroke_fill=stroke_fill,
+            )
+            x += int(widths[i]) + tracking
+
+    def draw_glow_text_xy(
+        text: str,
+        xy: tuple[int, int],
+        font,
+        fill=(255, 255, 255, 255),
+        glow_color=(255, 100, 200, 90),
+        glow_radius: int = 8,
+        stroke_width: int = 2,
+        stroke_fill=(0, 0, 0, 220),
+    ):
+        tx, ty = int(xy[0]), int(xy[1])
+
+        bbox = draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+
+        pad = glow_radius * 3 + 6
+        glow_mask = Image.new("L", (tw + pad * 2, th + pad * 2), 0)
+        gmd = ImageDraw.Draw(glow_mask)
+        gmd.text(
+            (pad - bbox[0], pad - bbox[1]),
+            text,
+            font=font,
+            fill=255,
+            stroke_width=stroke_width,
+        )
+
+        glow_img = Image.new("RGBA", glow_mask.size, glow_color)
+        glow_alpha = glow_mask.filter(ImageFilter.GaussianBlur(radius=glow_radius))
+        glow_img.putalpha(glow_alpha)
+
+        img.paste(glow_img, (tx - pad, ty - pad), glow_img)
+
+        draw.text(
+            (tx, ty),
+            text,
+            font=font,
+            fill=fill,
+            stroke_width=stroke_width,
+            stroke_fill=stroke_fill,
+        )
+
+    def center_glow_text(
+        text: str,
+        box: tuple[int, int, int, int],
+        font,
+        fill=(255, 255, 255, 255),
+        glow_color=(255, 95, 190, 95),
+        glow_radius: int = 10,
+        stroke_width: int = 3,
+        stroke_fill=(0, 0, 0, 220),
+    ):
+        x1, y1, x2, y2 = box
+        tw = draw.textlength(text, font=font)
+        th = text_h(text, font)
+
+        tx = x1 + ((x2 - x1) - int(tw)) // 2
+        ty = y1 + ((y2 - y1) - th) // 2
+
+        draw_glow_text_xy(
+            text=text,
+            xy=(tx, ty),
+            font=font,
+            fill=fill,
+            glow_color=glow_color,
+            glow_radius=glow_radius,
+            stroke_width=stroke_width,
+            stroke_fill=stroke_fill,
+        )
+
+    def draw_gradient_text(
+            text: str,
+            box: tuple[int, int, int, int],
+            font,
+            top_color=(255, 235, 145, 255),
+            bottom_color=(145, 86, 25, 255),
+            glow_color=(255, 185, 70, 70),
+            stroke_width: int = 3,
+            stroke_fill=(0, 0, 0, 220),
+    ):
+        x1, y1, x2, y2 = box
+
+        bbox = draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
+        bw = bbox[2] - bbox[0]
+        bh = bbox[3] - bbox[1]
+
+        pad = stroke_width * 4 + 8
+
+        mask = Image.new("L", (bw + pad * 2, bh + pad * 2), 0)
+        md = ImageDraw.Draw(mask)
+        md.text(
+            (pad - bbox[0], pad - bbox[1]),
+            text,
+            font=font,
+            fill=255,
+            stroke_width=stroke_width,
+        )
+
+        grad = Image.new("RGBA", mask.size, (0, 0, 0, 0))
+        gd = ImageDraw.Draw(grad)
+
+        gh = grad.size[1]
+        for yy in range(gh):
+            t = yy / max(1, gh - 1)
+
+            r = int(top_color[0] * (1 - t) + bottom_color[0] * t)
+            g = int(top_color[1] * (1 - t) + bottom_color[1] * t)
+            b = int(top_color[2] * (1 - t) + bottom_color[2] * t)
+            a = int(top_color[3] * (1 - t) + bottom_color[3] * t)
+
+            gd.line((0, yy, grad.size[0], yy), fill=(r, g, b, a))
+
+        tx = x1 + ((x2 - x1) - bw) // 2
+        ty = y1 + ((y2 - y1) - bh) // 2
+
+        # Свечение
+        glow_mask = mask.filter(ImageFilter.GaussianBlur(radius=max(2, int(6 * scale))))
+        glow_img = Image.new("RGBA", mask.size, glow_color)
+        glow_img.putalpha(glow_mask)
+        img.paste(glow_img, (tx - pad, ty - pad), glow_img)
+
+        # Тёмная обводка
+        draw.text(
+            (tx - bbox[0], ty - bbox[1]),
+            text,
+            font=font,
+            fill=(255, 255, 255, 35),
+            stroke_width=stroke_width,
+            stroke_fill=stroke_fill,
+        )
+
+        # Сам текст
+        img.paste(grad, (tx - pad, ty - pad), mask)
+
+        # Лёгкий блик
+        shine = Image.new("RGBA", mask.size, (0, 0, 0, 0))
+        sd = ImageDraw.Draw(shine)
+        sd.line(
+            (
+                int(mask.size[0] * 0.10),
+                int(mask.size[1] * 0.30),
+                int(mask.size[0] * 0.90),
+                int(mask.size[1] * 0.20),
+            ),
+            fill=(255, 255, 255, 70),
+            width=max(1, int(2 * scale)),
+        )
+
+        shine = shine.filter(ImageFilter.GaussianBlur(radius=max(1, int(1.5 * scale))))
+        img.paste(shine, (tx - pad, ty - pad), shine)
+
+    def rank_text_palette(rank_text: str) -> tuple[
+        tuple[int, int, int, int], tuple[int, int, int, int], tuple[int, int, int, int]]:
+        """
+        Возвращает цвета текста под базовый ранг.
+        Формат:
+        - верх градиента
+        - низ градиента
+        - цвет свечения
+        """
+        base = _rank_base_text(rank_text).lower()
+
+        palettes = {
+            "iron": (
+                (165, 170, 176, 255),
+                (72, 76, 82, 255),
+                (150, 155, 165, 70),
+            ),
+            "bronze": (
+                (205, 145, 72, 255),
+                (105, 63, 28, 255),
+                (190, 112, 50, 75),
+            ),
+            "silver": (
+                (245, 248, 246, 255),
+                (135, 145, 148, 255),
+                (220, 230, 230, 70),
+            ),
+            "gold": (
+                (255, 226, 92, 255),
+                (184, 112, 24, 255),
+                (255, 190, 60, 85),
+            ),
+            "platinum": (
+                (105, 230, 245, 255),
+                (22, 118, 138, 255),
+                (70, 210, 240, 85),
+            ),
+            "diamond": (
+                (210, 145, 255, 255),
+                (105, 62, 190, 255),
+                (185, 110, 255, 90),
+            ),
+            "ascendant": (
+                (105, 255, 175, 255),
+                (20, 130, 82, 255),
+                (80, 240, 150, 90),
+            ),
+            "immortal": (
+                (255, 115, 160, 255),
+                (138, 24, 55, 255),
+                (255, 70, 120, 95),
+            ),
+            "radiant": (
+                (255, 245, 205, 255),
+                (208, 168, 76, 255),
+                (255, 225, 140, 95),
+            ),
+            "unranked": (
+                (215, 215, 220, 255),
+                (110, 110, 120, 255),
+                (190, 190, 200, 70),
+            ),
+        }
+
+        return palettes.get(base, palettes["unranked"])
+
+    def add_panel_depth(box: tuple[int, int, int, int]):
+        """
+        Тёмный фиолетово-чёрный градиент внутри панели
+        + стеклянный внутренний кант
+        + мягкие цветовые отражения по краям.
+        """
+        x1, y1, x2, y2 = box
+        w = x2 - x1
+        h = y2 - y1
+        radius = int(26 * scale)
+
+        panel = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        pd = ImageDraw.Draw(panel)
+
+        for yy in range(h):
+            t = yy / max(1, h - 1)
+            r = int(28 * (1 - t) + 5 * t)
+            g = int(10 * (1 - t) + 4 * t)
+            b = int(42 * (1 - t) + 10 * t)
+            a = int(55 * (1 - t) + 108 * t)
+            pd.line((0, yy, w, yy), fill=(r, g, b, a))
+
+        mask = Image.new("L", (w, h), 0)
+        md = ImageDraw.Draw(mask)
+        md.rounded_rectangle((0, 0, w - 1, h - 1), radius=radius, fill=255)
+
+        img.paste(panel, (x1, y1), mask)
+
+        draw.rounded_rectangle(
+            (x1, y1, x2, y2),
+            radius=radius,
+            outline=(255, 255, 255, 82),
+            width=max(1, int(2 * scale)),
+        )
+
+        draw.rounded_rectangle(
+            (x1 + 4, y1 + 4, x2 - 4, y2 - 4),
+            radius=max(8, radius - 4),
+            outline=(255, 255, 255, 24),
+            width=max(1, int(1 * scale)),
+        )
+
+        draw.line(
+            (x1 + int(22 * scale), y1 + int(7 * scale), x2 - int(22 * scale), y1 + int(7 * scale)),
+            fill=(255, 255, 255, 22),
+            width=max(1, int(2 * scale)),
+        )
+
+        draw.line(
+            (x1 + int(3 * scale), y1 + int(24 * scale), x1 + int(3 * scale), y2 - int(24 * scale)),
+            fill=(255, 95, 190, 22),
+            width=max(1, int(2 * scale)),
+        )
+        draw.line(
+            (x2 - int(3 * scale), y1 + int(24 * scale), x2 - int(3 * scale), y2 - int(24 * scale)),
+            fill=(255, 165, 90, 18),
+            width=max(1, int(2 * scale)),
+        )
+
+    def add_avatar_inner_glow(base_img: Image.Image, outer_box: tuple[int, int, int, int]) -> Image.Image:
+        """
+        Мягкое внутреннее свечение для круга аватара.
+        Без жёстких колец, чтобы не было эффекта "затмения".
+        """
+        x1, y1, x2, y2 = outer_box
+        w = x2 - x1
+        h = y2 - y1
+
+        glow_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(glow_layer)
+
+        # Внутренний мягкий пурпурный ореол
+        inner_margin = int(8 * scale)
+        gd.ellipse(
+            (
+                x1 + inner_margin,
+                y1 + inner_margin,
+                x2 - inner_margin,
+                y2 - inner_margin,
+            ),
+            outline=(255, 105, 205, 80),
+            width=max(1, int(10 * scale)),
+        )
+
+        # Более глубокая тень внутри, чтобы круг выглядел как часть интерфейса
+        shadow_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(shadow_layer)
+        shadow_margin = int(4 * scale)
+        sd.ellipse(
+            (
+                x1 + shadow_margin,
+                y1 + shadow_margin,
+                x2 - shadow_margin,
+                y2 - shadow_margin,
+            ),
+            fill=(8, 0, 18, 12),
+        )
+
+        # Лёгкий блик сверху
+        shine_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        sh = ImageDraw.Draw(shine_layer)
+        sh.arc(
+            (
+                x1 + int(24 * scale),
+                y1 + int(20 * scale),
+                x2 - int(24 * scale),
+                y2 - int(52 * scale),
+            ),
+            start=205,
+            end=332,
+            fill=(255, 220, 245, 82),
+            width=max(1, int(4 * scale)),
+        )
+
+        glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(radius=max(2, int(10 * scale))))
+        shine_layer = shine_layer.filter(ImageFilter.GaussianBlur(radius=max(1, int(2 * scale))))
+
+        base_img = Image.alpha_composite(base_img, glow_layer)
+        base_img = Image.alpha_composite(base_img, shadow_layer)
+        base_img = Image.alpha_composite(base_img, shine_layer)
+
+        return base_img
+
+    def add_background_atmosphere(base_img: Image.Image) -> Image.Image:
+        """
+        Усиливает ощущение дорогого фона:
+        - больше падающих звёзд;
+        - лёгкий призм-блик в верхней зоне;
+        - мягкие отражения цвета на карточках.
+        """
+        overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        od = ImageDraw.Draw(overlay)
+
+        # Призматический блик в верхней зоне заголовка
+        header_streaks = [
+            (90, 68, 520, 58, (255, 165, 225, 38), max(1, int(6 * scale))),
+            (110, 88, 550, 98, (255, 255, 255, 18), max(1, int(3 * scale))),
+            (130, 102, 500, 120, (255, 120, 180, 12), max(1, int(10 * scale))),
+        ]
+        for x1, y1, x2, y2, color, width in header_streaks:
+            od.line((x1, y1, x2, y2), fill=color, width=width)
+
+        # Падающие звёзды
+        star_streaks = [
+            (1010, 42, 1060, 94, (255, 180, 215, 110), 2),
+            (1160, 68, 1218, 126, (255, 150, 210, 125), 2),
+            (1325, 88, 1378, 142, (255, 175, 220, 105), 2),
+            (1455, 114, 1510, 172, (255, 210, 235, 85), 2),
+            (1190, 26, 1228, 64, (255, 150, 190, 78), 1),
+            (1268, 56, 1306, 96, (255, 190, 240, 92), 1),
+            (1398, 48, 1440, 90, (255, 175, 210, 85), 1),
+            (1105, 36, 1148, 78, (255, 200, 230, 90), 1),
+            (1510, 58, 1554, 104, (255, 160, 210, 82), 1),
+        ]
+        for x1, y1, x2, y2, color, width in star_streaks:
+            od.line((x1, y1, x2, y2), fill=color, width=width)
+            od.ellipse((x1 - 2, y1 - 2, x1 + 2, y1 + 2), fill=(255, 255, 255, 120))
+
+        # Отражения по краям карточек
+        for bx1, by1, bx2, by2 in (left_panel, center_panel, right_panel):
+            od.line(
+                (bx1 + int(10 * scale), by1 + int(20 * scale), bx1 + int(10 * scale), by2 - int(20 * scale)),
+                fill=(255, 110, 190, 16),
+                width=max(1, int(2 * scale)),
+            )
+            od.line(
+                (bx2 - int(10 * scale), by1 + int(22 * scale), bx2 - int(10 * scale), by2 - int(22 * scale)),
+                fill=(255, 170, 90, 14),
+                width=max(1, int(2 * scale)),
+            )
+
+        overlay = overlay.filter(ImageFilter.GaussianBlur(radius=max(1, int(1.5 * scale))))
+        return Image.alpha_composite(base_img, overlay)
+
+    def draw_soft_row(
+            box: tuple[int, int, int, int],
+            label: str,
+            value: str,
+            label_font,
+            value_font,
+    ):
+        x1, y1, x2, y2 = box
+        radius = int(18 * scale)
+
+        # Лёгкая внешняя линия строки
+        draw.rounded_rectangle(
+            box,
+            radius=radius,
+            outline=(255, 255, 255, 92),
+            width=max(1, int(2 * scale)),
+        )
+
+        # Тонкий внутренний блик сверху, без заливки
+        draw.line(
+            (
+                x1 + int(16 * scale),
+                y1 + int(4 * scale),
+                x2 - int(16 * scale),
+                y1 + int(4 * scale),
+            ),
+            fill=(255, 255, 255, 34),
+            width=max(1, int(1 * scale)),
+        )
+
+        label_x = x1 + int(28 * sx)
+        label_y = y1 + ((y2 - y1) - text_h(label, label_font)) // 2 - int(1 * scale)
+
+        # Значения строго по правому краю
+        value_w = draw.textlength(value, font=value_font)
+        value_x = x2 - int(28 * sx) - int(value_w)
+
+        # Цифры чуть поднимаем, чтобы они визуально стояли по центру строки
+        value_y = y1 + ((y2 - y1) - text_h(value, value_font)) // 2 - int(3 * scale)
+
+        draw.text(
+            (label_x, label_y),
+            label,
+            font=label_font,
+            fill=(220, 220, 228, 255),
+            stroke_width=2,
+            stroke_fill=(0, 0, 0, 220),
+        )
+
+        draw.text(
+            (value_x, value_y),
+            value,
+            font=value_font,
+            fill=(255, 255, 255, 255),
+            stroke_width=2,
+            stroke_fill=(0, 0, 0, 220),
+        )
+
+    def paste_circle_avatar(
+        base_img: Image.Image,
+        avatar_raw: bytes | None,
+        box: tuple[int, int, int, int],
+    ):
+        x1, y1, x2, y2 = box
+        size = min(x2 - x1, y2 - y1)
+        x2 = x1 + size
+        y2 = y1 + size
+
+        if avatar_raw:
+            try:
+                av = Image.open(BytesIO(avatar_raw)).convert("RGBA")
+
+                side = min(av.width, av.height)
+                left = (av.width - side) // 2
+                top = (av.height - side) // 2
+                av = av.crop((left, top, left + side, top + side))
+
+                av = av.resize((size, size), Image.LANCZOS)
+
+                mask = Image.new("L", (size, size), 0)
+                mask_draw = ImageDraw.Draw(mask)
+                mask_draw.ellipse((0, 0, size, size), fill=255)
+
+                base_img.paste(av, (x1, y1), mask)
+                return
+            except Exception:
+                pass
+
+        # Заглушка
+        draw.ellipse(
+            (x1, y1, x2, y2),
+            fill=(0, 0, 0, 170),
+        )
+
+        q_font = get_font(int(110 * scale))
+        center_text(
+            "?",
+            (x1, y1 - int(12 * scale), x2, y2 - int(12 * scale)),
+            q_font,
+            fill=(255, 255, 255, 255),
+            stroke_width=4,
+        )
+
+        # subtle призматический блик по заглушке
+        shine = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(shine)
+        sd.arc(
+            (x1 + int(22 * scale), y1 + int(18 * scale), x2 - int(22 * scale), y2 - int(40 * scale)),
+            start=205,
+            end=330,
+            fill=(255, 175, 225, 80),
+            width=max(1, int(4 * scale)),
+        )
+        shine = shine.filter(ImageFilter.GaussianBlur(radius=max(1, int(2 * scale))))
+        base_img.alpha_composite(shine)
+
+    # ---------- Шрифты ----------
+    title_font = get_font(int(46 * scale))
+
+    # подписи в статистике
+    label_font = get_font(int(29 * scale))
+
+    # значения справа в статистике
+    value_font = get_font(int(42 * scale))
+
+    # центр
+    name_font_start = int(66 * scale)
+    riot_font_start = int(30 * scale)
+
+    # ранг сверху справа
+    rank_font_start = int(48 * scale)
+
+    # ---------- Левая колонка: статистика ----------
+    lx1, ly1, lx2, ly2 = left_panel
+
+    row_left = lx1 + int(38 * sx)
+    row_right = lx2 - int(38 * sx)
+    row_h = int(58 * sy)
+    row_gap = int(15 * sy)
+    row_y = ly1 + int(58 * sy)
+
     rows = [
         ("Matches", str(matches)),
-        ("Winrate", (f"{winrate:.1f}".rstrip("0").rstrip(".") + "%") if matches > 0 else "—"),
+        ("Winrate", winrate_text),
         ("Wins", str(wins)),
-        ("Loses", str(losses)),
+        ("Loses", str(loses)),
         ("Streak", str(win_streak) if win_streak is not None else "—"),
         ("Fav map", favorite_map if favorite_map else "—"),
     ]
 
-    # компактная верстка под 6 строк
-    STAT_ROW_H = 62
-    STAT_GAP = 12
-    TOP_PAD = 22
-    BOT_PAD = 22
-
-    needed_h = TOP_PAD + len(rows) * STAT_ROW_H + (len(rows) - 1) * STAT_GAP + BOT_PAD
-    left_y2 = left_y1 + needed_h
-    draw.rounded_rectangle((left_x1, left_y1, left_x2, left_y2), radius=26, fill=PANEL_FILL, outline=PANEL_OUT, width=2)
-
-    ry = left_y1 + 22
     for label, value in rows:
-        draw.rounded_rectangle(
-            (left_x1 + 20, ry, left_x2 - 20, ry + STAT_ROW_H),
-            radius=18,
-            fill=(0, 0, 0, 110),
-            outline=(255, 255, 255, 25),
-            width=2
-        )
-
-        # label
-        _draw_text(
-            draw,
-            (left_x1 + 40, ry + 16),
+        draw_soft_row(
+            (row_left, row_y, row_right, row_y + row_h),
             label,
-            small_font,
-            fill=(220, 220, 220, 255),
-            stroke=2
-        )
-
-        # value (справа)
-        val_w = int(draw.textlength(value, font=value_font))
-        _draw_text(
-            draw,
-            (left_x2 - 40 - val_w, ry + 12),
             value,
+            label_font,
             value_font,
-            fill="white",
-            stroke=2
         )
+        row_y += row_h + row_gap
 
-        ry += STAT_ROW_H + STAT_GAP
+    # ---------- Центр: аватар ----------
+    avatar_outer_box_base = SBOX((678, 281, 1022, 625))
 
-    # ---------- центр: аватар круглый ----------
-    avatar_size = 250
-    cx = (mid_x1 + mid_x2) // 2
-    cy = mid_y1 + 165
+    avatar_shift_x = int(8 * sx)
+    avatar_shift_y = int(6 * sy)
 
-    # рамка
-    draw.ellipse((cx - avatar_size//2 - 8, cy - avatar_size//2 - 8, cx + avatar_size//2 + 8, cy + avatar_size//2 + 8),
-                 outline=(255, 255, 255, 55), width=6)
+    avatar_outer_box = (
+        avatar_outer_box_base[0] + avatar_shift_x,
+        avatar_outer_box_base[1] + avatar_shift_y,
+        avatar_outer_box_base[2] + avatar_shift_x,
+        avatar_outer_box_base[3] + avatar_shift_y,
+    )
 
-    if avatar_bytes:
-        try:
-            av = Image.open(BytesIO(avatar_bytes)).convert("RGBA").resize((avatar_size, avatar_size), Image.LANCZOS)
+    avatar_inset = int(4 * scale)
 
-            mask = Image.new("L", (avatar_size, avatar_size), 0)
-            mdraw = ImageDraw.Draw(mask)
-            mdraw.ellipse((0, 0, avatar_size, avatar_size), fill=255)
+    avatar_box = (
+        avatar_outer_box[0] + avatar_inset,
+        avatar_outer_box[1] + avatar_inset,
+        avatar_outer_box[2] - avatar_inset,
+        avatar_outer_box[3] - avatar_inset,
+    )
 
-            img.paste(av, (cx - avatar_size//2, cy - avatar_size//2), mask)
-        except Exception:
-            # если аватар сломался — рисуем заглушку
-            draw.ellipse((cx - avatar_size//2, cy - avatar_size//2, cx + avatar_size//2, cy + avatar_size//2),
-                         fill=(0, 0, 0, 160), outline=(255, 255, 255, 35), width=2)
-            _draw_text(draw, (cx - 22, cy - 40), "?", get_font(96), fill="white", stroke=4)
-    else:
-        draw.ellipse((cx - avatar_size//2, cy - avatar_size//2, cx + avatar_size//2, cy + avatar_size//2),
-                     fill=(0, 0, 0, 160), outline=(255, 255, 255, 35), width=2)
-        _draw_text(draw, (cx - 22, cy - 40), "?", get_font(96), fill="white", stroke=4)
+    paste_circle_avatar(img, avatar_bytes, avatar_box)
 
-    # Ник Discord / Riot
-    dn = (discord_name or "").strip()
-    rn = (riot_username or "—").strip()
+    img = add_avatar_inner_glow(img, avatar_outer_box)
+    draw = ImageDraw.Draw(img)
 
-    # Discord name
-    dn_w = draw.textlength(dn, font=name_font)
-    _draw_text(draw, (cx - int(dn_w)//2, mid_y2 - 150), dn, name_font, fill="white", stroke=3)
+    # ---------- Центр: имена ----------
+    cx1, cy1, cx2, cy2 = center_panel
+    max_center_text_w = cx2 - cx1 - int(70 * sx)
 
-    # Riot username
-    rfont = get_font(40)
-    rn_w = draw.textlength(rn, font=rfont)
-    _draw_text(draw, (cx - int(rn_w)//2, mid_y2 - 86), rn, rfont, fill=(210, 210, 210, 255), stroke=2)
+    discord_font = fit_font(
+        discord_name,
+        max_center_text_w,
+        name_font_start,
+        min_size=int(30 * scale),
+    )
 
-    # ---------- правая панель: ранг ----------
-    rank_raw = str(rank or "Unranked").strip()
-    rb = _rank_base_text(rank_raw)
-    icon_path = get_icon_path(rank_raw) or _rank_icon_path(rb)
+    riot_font = fit_font(
+        riot_username,
+        max_center_text_w,
+        riot_font_start,
+        min_size=int(22 * scale),
+    )
 
-    icx = (right_x1 + right_x2) // 2
-    panel_w = (right_x2 - right_x1)
-    pad = 26
-    max_text_w = panel_w - pad * 2
+    # ---------- Центр: имена ----------
+    cx1, cy1, cx2, cy2 = center_panel
+    max_center_text_w = cx2 - cx1 - int(70 * sx)
 
-    # 1) Ранг — сверху, но шрифт подгоняем под ширину панели
-    rname = rank_raw if rank_raw else rb
-    rname_font = _fit_font(draw, rname, max_text_w, start=56, min_size=30)
-    rw = draw.textlength(rname, font=rname_font)
-    _draw_text(draw, (icx - int(rw) // 2, right_y1 + 32), rname, rname_font, fill=ACCENT, stroke=3)
+    discord_font = fit_font(
+        discord_name,
+        max_center_text_w,
+        name_font_start,
+        min_size=int(30 * scale),
+    )
 
-    # 2) Иконка ранга — строго по центру правой панели
-    icon_size = 132
-    icy = (right_y1 + right_y2) // 2 - 30
+    riot_font = fit_font(
+        riot_username,
+        max_center_text_w,
+        riot_font_start,
+        min_size=int(22 * scale),
+    )
 
-    ring = 10
+    name_shift_y = int(10 * sy)
+
+    center_glow_text(
+        discord_name,
+        (
+            cx1 + int(24 * sx),
+            cy1 + int(378 * sy) + name_shift_y,
+            cx2 - int(24 * sx),
+            cy1 + int(456 * sy) + name_shift_y,
+        ),
+        discord_font,
+        fill=(255, 255, 255, 255),
+        glow_color=(255, 110, 205, 88),
+        glow_radius=max(2, int(6 * scale)),
+        stroke_width=4,
+    )
+
+    center_text(
+        riot_username,
+        (
+            cx1 + int(28 * sx),
+            cy1 + int(452 * sy) + name_shift_y,
+            cx2 - int(28 * sx),
+            cy1 + int(506 * sy) + name_shift_y,
+        ),
+        riot_font,
+        fill=(188, 188, 198, 255),
+        stroke_width=2,
+    )
+
+    # ---------- Правая колонка: ранг ----------
+    rx1, ry1, rx2, ry2 = right_panel
+    right_shift_x = int(12 * sx)
+    right_cx = (rx1 + rx2) // 2 + right_shift_x
+
+    # ---------- Название ранга ----------
+    rank_top_color, rank_bottom_color, rank_glow_color = rank_text_palette(rank_raw)
+
+    rank_title_font = fit_font(
+        rank_raw,
+        int(270 * sx),
+        rank_font_start,
+        min_size=int(26 * scale),
+    )
+
+    draw_gradient_text(
+        rank_raw,
+        (
+            right_cx - int(145 * sx),
+            ry1 + int(42 * sy),
+            right_cx + int(145 * sx),
+            ry1 + int(112 * sy),
+        ),
+        rank_title_font,
+        top_color=rank_top_color,
+        bottom_color=rank_bottom_color,
+        glow_color=rank_glow_color,
+        stroke_width=2,
+    )
+
+    # ---------- Иконка ранга ----------
+    icon_path = get_icon_path(rank_raw) or _rank_icon_path(_rank_base_text(rank_raw))
+
+    icon_size = int(176 * scale)
+    icon_x = right_cx - icon_size // 2
+    icon_y = ry1 + int(160 * sy)
+
     draw.ellipse(
-        (icx - icon_size // 2 - ring, icy - icon_size // 2 - ring,
-         icx + icon_size // 2 + ring, icy + icon_size // 2 + ring),
-        fill=(0, 0, 0, 120),
-        outline=(255, 255, 255, 45),
-        width=4
+        (
+            icon_x - int(10 * sx),
+            icon_y - int(10 * sy),
+            icon_x + icon_size + int(10 * sx),
+            icon_y + icon_size + int(10 * sy),
+        ),
+        fill=(0, 0, 0, 105),
+        outline=(255, 255, 255, 36),
+        width=max(1, int(2 * scale)),
     )
 
     if icon_path and Path(icon_path).exists():
         try:
-            icon = Image.open(icon_path).convert("RGBA").resize((icon_size, icon_size), Image.LANCZOS)
-            img.paste(icon, (icx - icon_size // 2, icy - icon_size // 2), icon)
+            icon = Image.open(icon_path).convert("RGBA")
+            icon = icon.resize((icon_size, icon_size), Image.LANCZOS)
+            img.paste(icon, (icon_x, icon_y), icon)
         except Exception:
-            _draw_text(draw, (icx - 18, icy - 52), "?", get_font(96), fill="white", stroke=4)
+            q_font = get_font(int(110 * scale))
+            center_text(
+                "?",
+                (icon_x, icon_y, icon_x + icon_size, icon_y + icon_size),
+                q_font,
+                fill=(255, 255, 255, 255),
+                stroke_width=4,
+            )
     else:
-        _draw_text(draw, (icx - 18, icy - 52), "?", get_font(96), fill="white", stroke=4)
+        q_font = get_font(int(110 * scale))
+        center_text(
+            "?",
+            (icon_x, icon_y, icon_x + icon_size, icon_y + icon_size),
+            q_font,
+            fill=(255, 255, 255, 255),
+            stroke_width=4,
+        )
 
-    # 3) Wins
-    label_font = get_font(28)
-    value_font_big = get_font(96)
+    # ---------- Wins справа снизу ----------
+    wins_label_font = get_font(int(34 * scale))
 
-    wins_label_y = icy + (icon_size // 2) + 46
-    wins_value_y = wins_label_y + 40
-
-    _w = draw.textlength("Wins", font=label_font)
-    _draw_text(
-        draw,
-        (icx - int(_w) // 2, wins_label_y),
-        "Wins",
-        label_font,
-        fill=(235, 235, 235, 230),
-        stroke=2
+    # Делаем шрифт адаптивным, чтобы и 7, и 27, и 127 выглядели красиво
+    wins_text = str(wins)
+    wins_value_font = fit_font(
+        wins_text,
+        int(190 * sx),
+        int(92 * scale),
+        min_size=int(58 * scale),
     )
 
-    big = str(wins)
-    bw = draw.textlength(big, font=value_font_big)
-    _draw_text(draw, (icx - int(bw) // 2, wins_value_y), big, value_font_big, fill="white", stroke=4)
+    center_text(
+        "Wins",
+        (
+            right_cx - int(130 * sx),
+            ry1 + int(365 * sy),
+            right_cx + int(130 * sx),
+            ry1 + int(420 * sy),
+        ),
+        wins_label_font,
+        fill=(235, 235, 235, 235),
+        stroke_width=2,
+    )
 
-    # ---------- Theme overlay (seasonal) ----------
-    try:
-        safe_rects = [
-            (0, 0, WIDTH, 165),  # заголовок
-            (left_x1 - 8, left_y1 - 8, left_x2 + 8, left_y2 + 8),
-            (mid_x1 - 8, mid_y1 - 8, mid_x2 + 8, mid_y2 + 8),
-            (right_x1 - 8, right_y1 - 8, right_x2 + 8, right_y2 + 8),
-        ]
-        img = apply_theme_overlay(img, theme, safe_rects=safe_rects)
-        draw = ImageDraw.Draw(img)
-    except Exception:
-        pass
+    center_text(
+        wins_text,
+        (
+            right_cx - int(140 * sx),
+            ry1 + int(420 * sy),
+            right_cx + int(140 * sx),
+            ry1 + int(555 * sy),
+        ),
+        wins_value_font,
+        fill=(255, 255, 255, 255),
+        stroke_width=4,
+    )
 
+    # ---------- Сохраняем ----------
     img.save(out_path)
     return out_path
