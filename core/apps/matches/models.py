@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import uuid
-from django.db import models
 from django.conf import settings
+from django.db import models
+
 from apps.players.models import Player
 
 
@@ -14,40 +14,74 @@ class Match(models.Model):
         M5 = "5x5", "5x5"
 
     class Status(models.TextChoices):
-        PENDING = "pending", "Pending"
+        DRAFT = "draft", "Draft"
+        READY = "ready", "Ready"
+        IN_PROGRESS = "in_progress", "In Progress"
         FINISHED = "finished", "Finished"
-        ABANDONED = "abandoned", "Abandoned"
         CANCELED = "canceled", "Canceled"
 
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
+    finished_at = models.DateTimeField(null=True, blank=True, verbose_name="Дата завершения")
+
+    # Идемпотентность: UUID, который приходит от Discord-бота.
+    # Нужен, чтобы повторный запрос не создавал дубль матча.
+    external_id = models.UUIDField(
+        null=True,
+        blank=True,
+        unique=True,
+        db_index=True,
+        verbose_name="External ID (bot)",
+    )
+
+    # Дополнительный уникальный ключ матча.
+    # Например: guild_id:channel_id:lobby_id:mode
+    external_match_key = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        unique=True,
+        db_index=True,
+        verbose_name="External match key",
+    )
+
+    # Discord-привязки
     discord_guild_id = models.BigIntegerField(
         null=True,
         blank=True,
         db_index=True,
         verbose_name="Discord Guild ID",
     )
-
     discord_channel_id = models.BigIntegerField(
         null=True,
         blank=True,
         db_index=True,
         verbose_name="Discord Channel ID",
     )
-
-    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
-    finished_at = models.DateTimeField(null=True, blank=True, verbose_name="Дата завершения")
-
-    #ИДЕМПОТЕНТНОСТЬ (защита от дублей)
-    external_id = models.UUIDField(
+    discord_message_id = models.BigIntegerField(
         null=True,
         blank=True,
-        unique=True,
-        db_index=True,
-        verbose_name="External id (bot)",
+        verbose_name="Discord Message ID",
+    )
+    win_message_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Win Message ID",
     )
 
-    #Идентификатор лобби
-    lobby_id = models.PositiveIntegerField(null=True, blank=True, db_index=True, verbose_name="Lobby ID")
-    lobby_name = models.CharField(max_length=64, null=True, blank=True, db_index=True, verbose_name="Название лобби")
+    # Лобби
+    lobby_id = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="Lobby ID",
+    )
+    lobby_name = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="Название лобби",
+    )
 
     mode = models.CharField(
         max_length=3,
@@ -66,15 +100,32 @@ class Match(models.Model):
     status = models.CharField(
         max_length=16,
         choices=Status.choices,
-        default=Status.PENDING,
+        default=Status.DRAFT,
         db_index=True,
         verbose_name="Статус матча",
     )
 
-    captain_1 = models.ForeignKey(Player, related_name="matches_as_captain1", on_delete=models.CASCADE)
-    captain_2 = models.ForeignKey(Player, related_name="matches_as_captain2", on_delete=models.CASCADE)
-    team_1 = models.ManyToManyField(Player, related_name="matches_in_team1", blank=True)
-    team_2 = models.ManyToManyField(Player, related_name="matches_in_team2", blank=True)
+    captain_1 = models.ForeignKey(
+        Player,
+        related_name="matches_as_captain1",
+        on_delete=models.CASCADE,
+    )
+    captain_2 = models.ForeignKey(
+        Player,
+        related_name="matches_as_captain2",
+        on_delete=models.CASCADE,
+    )
+
+    team_1 = models.ManyToManyField(
+        Player,
+        related_name="matches_in_team1",
+        blank=True,
+    )
+    team_2 = models.ManyToManyField(
+        Player,
+        related_name="matches_in_team2",
+        blank=True,
+    )
 
     winner_team = models.PositiveSmallIntegerField(
         choices=[(1, "Team 1"), (2, "Team 2")],
@@ -83,16 +134,61 @@ class Match(models.Model):
         verbose_name="Победитель",
     )
 
-    map_name = models.CharField(max_length=50, null=True, blank=True, verbose_name="Карта матча")
-    sides = models.JSONField(null=True, blank=True, verbose_name="Стороны команд (атака/защита)")
+    map_name = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        verbose_name="Карта матча",
+    )
+    sides = models.JSONField(
+        null=True,
+        blank=True,
+        verbose_name="Стороны команд",
+    )
 
-    duration_seconds = models.PositiveIntegerField(null=True, blank=True, verbose_name="Длительность (сек)")
-    score_team1 = models.PositiveSmallIntegerField(null=True, blank=True, verbose_name="Счёт Team 1")
-    score_team2 = models.PositiveSmallIntegerField(null=True, blank=True, verbose_name="Счёт Team 2")
-    region = models.CharField(max_length=32, null=True, blank=True, verbose_name="Регион/сервер")
-    overtime = models.BooleanField(default=False, verbose_name="Овертайм")
-    forfeit = models.BooleanField(default=False, verbose_name="Форфит")
-    forfeit_reason = models.CharField(max_length=128, null=True, blank=True, verbose_name="Причина форфита")
+    duration_seconds = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Длительность",
+    )
+    score_team1 = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Счёт Team 1",
+    )
+    score_team2 = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Счёт Team 2",
+    )
+    region = models.CharField(
+        max_length=32,
+        null=True,
+        blank=True,
+        verbose_name="Регион/сервер",
+    )
+    overtime = models.BooleanField(
+        default=False,
+        verbose_name="Овертайм",
+    )
+    forfeit = models.BooleanField(
+        default=False,
+        verbose_name="Форфит",
+    )
+    forfeit_reason = models.CharField(
+        max_length=128,
+        null=True,
+        blank=True,
+        verbose_name="Причина форфита",
+    )
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["status", "created_at"]),
+            models.Index(fields=["mode", "is_ranked"]),
+            models.Index(fields=["discord_guild_id", "discord_channel_id"]),
+        ]
 
     def __str__(self):
         return f"Match {self.id} ({self.mode}) {self.captain_1_id} vs {self.captain_2_id}"
@@ -101,11 +197,21 @@ class Match(models.Model):
 class MatchEvent(models.Model):
     class Type(models.TextChoices):
         CREATED = "created", "Created"
+        READY = "ready", "Ready"
+        STARTED = "started", "Started"
         WIN_SET = "win_set", "Win Set"
+        CANCELED = "canceled", "Canceled"
         STATUS_CHANGED = "status_changed", "Status Changed"
 
-    match = models.ForeignKey(Match, on_delete=models.CASCADE, related_name="events")
-    type = models.CharField(max_length=64, choices=Type.choices)
+    match = models.ForeignKey(
+        Match,
+        on_delete=models.CASCADE,
+        related_name="events",
+    )
+    type = models.CharField(
+        max_length=64,
+        choices=Type.choices,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     data = models.JSONField(default=dict, blank=True)
     actor = models.ForeignKey(

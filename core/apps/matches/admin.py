@@ -1,6 +1,6 @@
 from django import forms
 from django.contrib import admin
-from django.utils.safestring import mark_safe
+from django.utils.html import format_html
 from .models import Match, MatchEvent
 import csv
 from django.http import HttpResponse
@@ -105,4 +105,4 @@ class MatchEventAdmin(admin.ModelAdmin):
     def short_data(self, obj):
         import json
         text = json.dumps(obj.data, ensure_ascii=False, indent=2)[:300]
-        return mark_safe(f"<pre style='white-space:pre-wrap'>{text}</pre>")
+        return format_html("<pre style='white-space:pre-wrap'>{}</pre>", text)
