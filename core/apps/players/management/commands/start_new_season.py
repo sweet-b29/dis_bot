@@ -1,68 +1,88 @@
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
-from django.apps import apps
 
-from apps.players.models import Player, PlayerBan, Season, PlayerSeasonStat
-
-
-def get_model(app_labels: list[str], model_name: str):
-    for label in app_labels:
-        try:
-            return apps.get_model(label, model_name)
-        except LookupError:
-            pass
-    return None
+from apps.players.models import Player, Season, PlayerSeasonStat
 
 
 class Command(BaseCommand):
-    help = "Archive current player stats into a Season and reset the system (optionally wiping players/matches)."
+    help = (
+        "Close current season: archive player stats into PlayerSeasonStat "
+        "and reset wins/matches without deleting players, matches or bans."
+    )
 
     def add_arguments(self, parser):
-        parser.add_argument("--name", type=str, default=None, help="Season name, e.g. 'Season 1'")
-        parser.add_argument("--wipe-players", action="store_true", help="Delete all players after archiving (forces re-registration).")
-        parser.add_argument("--wipe-matches", action="store_true", help="Delete all matches after archiving.")
+        parser.add_argument(
+            "--name",
+            type=str,
+            required=True,
+            help="Season name, e.g. 'Season 1'",
+        )
+        parser.add_argument(
+            "--confirm",
+            type=str,
+            required=True,
+            help="Must be CONFIRM to run this command.",
+        )
 
     @transaction.atomic
     def handle(self, *args, **options):
-        name = options["name"] or f"Season {timezone.now().strftime('%Y-%m-%d %H:%M')}"
-        wipe_players = options["wipe_players"]
-        wipe_matches = options["wipe_matches"]
+        season_name = str(options["name"]).strip()
+        confirm = str(options["confirm"]).strip()
 
-        season = Season.objects.create(name=name, ended_at=timezone.now())
+        if confirm != "CONFIRM":
+            raise CommandError("To close season, pass: --confirm CONFIRM")
 
-        # snapshot stats
-        stats = []
-        for p in Player.objects.all().only("discord_id", "username", "rank", "wins", "matches"):
-            stats.append(PlayerSeasonStat(
+        if not season_name:
+            raise CommandError("Season name cannot be empty.")
+
+        if Season.objects.filter(name=season_name).exists():
+            raise CommandError(f"Season '{season_name}' already exists.")
+
+        players = list(
+            Player.objects.all().only(
+                "discord_id",
+                "username",
+                "rank",
+                "wins",
+                "matches",
+            )
+        )
+
+        if not players:
+            raise CommandError("No players found. Season was not created.")
+
+        season = Season.objects.create(
+            name=season_name,
+            ended_at=timezone.now(),
+        )
+
+        season_stats = [
+            PlayerSeasonStat(
                 season=season,
                 discord_id=p.discord_id,
-                username=p.username,
-                rank=p.rank,
-                wins=p.wins,
-                matches=p.matches,
-            ))
-        PlayerSeasonStat.objects.bulk_create(stats, batch_size=1000)
+                username=p.username or "",
+                rank=p.rank or "Unranked",
+                wins=int(p.wins or 0),
+                matches=int(p.matches or 0),
+            )
+            for p in players
+        ]
 
-        # wipe matches/events if requested
-        if wipe_matches:
-            MatchEvent = get_model(["apps.matches", "matches"], "MatchEvent")
-            Match = get_model(["apps.matches", "matches"], "Match")
+        PlayerSeasonStat.objects.bulk_create(
+            season_stats,
+            batch_size=1000,
+        )
 
-            if MatchEvent:
-                MatchEvent.objects.all().delete()
-            if Match:
-                Match.objects.all().delete()
+        reset_count = Player.objects.update(
+            wins=0,
+            matches=0,
+        )
 
-        # wipe bans always (обычно логично начинать сезон без банов)
-        PlayerBan.objects.all().delete()
-
-        # wipe players if requested (forces re-registration)
-        if wipe_players:
-            Player.objects.all().delete()
-        else:
-            Player.objects.all().update(wins=0, matches=0)
-
-        self.stdout.write(self.style.SUCCESS(
-            f"OK: season='{season.name}', archived={len(stats)}, wipe_players={wipe_players}, wipe_matches={wipe_matches}"
-        ))
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"✅ Season closed: '{season.name}'. "
+                f"Archived players: {len(season_stats)}. "
+                f"Reset players: {reset_count}."
+            )
+        )

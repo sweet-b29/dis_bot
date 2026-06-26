@@ -4,9 +4,9 @@ from apps.players.models import Player
 
 
 class Command(BaseCommand):
-    help = "Reset wins/matches for all players (season reset of stats)."
+    help = "Reset wins/matches for all players without touching profiles."
 
     def handle(self, *args, **options):
         with transaction.atomic():
-            updated = Player.objects.all().update(wins=0, matches=0, last_name_change=None)
+            updated = Player.objects.all().update(wins=0, matches=0)
         self.stdout.write(self.style.SUCCESS(f"✅ Reset stats for {updated} players"))
