@@ -8,7 +8,6 @@ from modules.utils import api_client
 from modules.utils.valorant_api import fetch_valorant_rank, ValorantRankError
 from modules.utils.rank_sync import riot_id_is_valid
 from modules.utils.image_generator import generate_profile_card
-from io import BytesIO
 
 
 
@@ -143,23 +142,35 @@ class EditProfileModal(discord.ui.Modal, title="Обновить Riot ID и ра
 
         # пробуем получить актуальный ранг из Valorant API
         # по умолчанию считаем Unranked, если что-то пойдёт не так
-        rank = "Unranked"
+        rank = None
         region_used = "—"
+        rank_warning = ""
 
         try:
             rank, region_used = await fetch_valorant_rank(riot_id_value)
-        except (ValorantRankError, Exception):
-            # Любая ошибка внешнего сервиса не должна ломать регистрацию.
-            # Оставляем rank = "Unranked", region_used = "—".
-            pass
+        except ValorantRankError as e:
+            rank_warning = f"\n⚠️ Ранг сейчас не удалось обновить: `{e}`"
+        except Exception:
+            rank_warning = "\n⚠️ Ранг сейчас не удалось обновить из-за ошибки внешнего API."
 
         # сохраняем профиль в Django API
         try:
+            payload_rank = rank if rank else None
+
             await api_client.update_player_profile(
                 discord_id=interaction.user.id,
                 username=riot_id_value,
-                rank=rank,
+                rank=payload_rank,
                 create_if_not_exist=True,
+            )
+            rank_text = rank or "оставлен прежний"
+
+            await interaction.followup.send(
+                f"✅ Профиль обновлён.\n"
+                f"Riot ID: `{riot_id_value}`\n"
+                f"Ранг: **{rank_text}** (region: `{region_used}`)"
+                f"{rank_warning}",
+                ephemeral=True,
             )
         except Exception:
             await interaction.followup.send(

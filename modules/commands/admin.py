@@ -80,7 +80,7 @@ class Admin(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="syncallranks", description="Синхронизировать ранги всех игроков через HenrikDev")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def sync_all_ranks(self, interaction: discord.Interaction):
         """
         Медленный, но гарантированный синк:
@@ -124,7 +124,7 @@ class Admin(commands.Cog):
                     discord_id=int(discord_id),
                     username=riot_id,
                     force=True,
-                    allow_unranked_overwrite=True,
+                    allow_unranked_overwrite=False,
                     return_updated_only=True,
                     raise_on_fetch_error=True,
                 )
@@ -256,6 +256,12 @@ class Admin(commands.Cog):
             return
 
         n = int(s[:-1])
+        if n <= 0:
+            await interaction.followup.send(
+                "❌ Длительность должна быть больше 0.",
+                ephemeral=True,
+            )
+            return
         unit = s[-1]
         if unit == "m":
             delta = timedelta(minutes=n)
@@ -298,7 +304,12 @@ class Admin(commands.Cog):
         embed.add_field(name="/changewins", value="Установить победы игрока", inline=False)
         embed.add_field(name="/ban", value="Бан по discord_id на время", inline=False)
         embed.add_field(name="/close_season", value="Закрыть сезон и обнулить статистику. Только BOT_OWNER_ID.",
-                        inline=False)
+                        inline=False),
+        embed.add_field(
+            name="/syncallranks",
+            value="Синхронизировать ранги всех игроков через HenrikDev",
+            inline=False,
+        )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 

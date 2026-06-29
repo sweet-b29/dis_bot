@@ -57,14 +57,22 @@ class Rating(commands.Cog):
 
         await interaction.response.defer()
 
-        data = await api_client.get_top10_players()
+        try:
+            data = await api_client.get_top10_players()
+        except Exception as e:
+            await interaction.followup.send(f"❌ API недоступен: `{e}`", ephemeral=True)
+            return
         if not isinstance(data, list) or not data:
             await interaction.followup.send("❌ Не удалось загрузить таблицу лидеров.", ephemeral=True)
             return
 
         await _attach_display_names(interaction.guild, data)
 
-        image_path = generate_leaderboard_image(data)
+        try:
+            image_path = generate_leaderboard_image(data)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка генерации лидерборда: `{e}`", ephemeral=True)
+            return
         file = discord.File(image_path, filename="leaderboard.png")
 
         view = Top10View()
@@ -83,14 +91,22 @@ class Top10View(discord.ui.View):
 
         await interaction.response.defer()
 
-        data = await api_client.get_top10_players()
+        try:
+            data = await api_client.get_top10_players()
+        except Exception as e:
+            await interaction.followup.send(f"❌ API недоступен: `{e}`", ephemeral=True)
+            return
         if not isinstance(data, list) or not data:
             await interaction.followup.send("❌ Не удалось обновить список лидеров.", ephemeral=True)
             return
 
         await _attach_display_names(interaction.guild, data)
 
-        image_path = generate_leaderboard_image(data)
+        try:
+            image_path = generate_leaderboard_image(data)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка генерации лидерборда: `{e}`", ephemeral=True)
+            return
         file = discord.File(image_path, filename="leaderboard.png")
 
         await interaction.edit_original_response(attachments=[file])
