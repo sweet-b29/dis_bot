@@ -1,31 +1,48 @@
 import os
-import time
 import sys
-import discord
-from discord.ext import commands, tasks
-from dotenv import load_dotenv
-from pathlib import Path
+import time
 import logging
-from loguru import logger
-from modules.lobby.lobby import LobbyMenuView
-from discord import File
-from modules.utils.api_client import ensure_api_config
-import aiohttp
-from modules.utils import api_client
-from modules.utils import valorant_api
-from discord import InteractionResponded, HTTPException
+from pathlib import Path
 
-load_dotenv(dotenv_path=Path(__file__).resolve().parents[2] / ".env")
+from dotenv import load_dotenv
+
+# ВАЖНО:
+# .env должен загрузиться ДО импортов внутренних модулей проекта,
+# потому что api_client / valorant_api / lobby могут читать env на уровне импорта.
+BASE_DIR = Path(__file__).resolve().parents[2]
+load_dotenv(dotenv_path=BASE_DIR / ".env")
+
+import aiohttp
+import discord
+from discord import File, HTTPException, InteractionResponded
+from discord.ext import commands, tasks
+from loguru import logger
+
+from modules.lobby.lobby import LobbyMenuView
+from modules.utils import api_client, valorant_api
+from modules.utils.api_client import ensure_api_config
+
+def get_env_int(name: str, default: int = 0) -> int:
+    raw = os.getenv(name)
+
+    if raw is None or str(raw).strip() == "":
+        return default
+
+    try:
+        return int(raw)
+    except ValueError:
+        raise RuntimeError(f"ENV ошибка: {name} должен быть числом, сейчас: {raw!r}")
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-GUILD_ID = int(os.getenv("GUILD_ID", 0))
-LOBBY_CHANNEL_ID = int(os.getenv("LOBBY_CHANNEL_ID", 0))
+GUILD_ID = get_env_int("GUILD_ID")
+LOBBY_CHANNEL_ID = get_env_int("LOBBY_CHANNEL_ID")
+LOBBY_PANEL_MESSAGE_ID = get_env_int("LOBBY_PANEL_MESSAGE_ID")
 
 intents = discord.Intents.default()
 intents.members = True
 intents.guilds = True
 intents.voice_states = True
-intents.message_content = True
+intents.message_content = False
 
 bot = commands.Bot(command_prefix=".", intents=intents)
 bot.lobby_panel_message = None
@@ -76,14 +93,12 @@ async def refresh_lobby_panel_view():
 
 @bot.event
 async def setup_hook():
-    GUILD_ID = int(os.getenv("GUILD_ID"))
-
     # Загрузка всех команд из modules/commands/*
     base_dir = Path(__file__).resolve().parents[2]
     commands_dir = base_dir / "modules" / "commands"
 
     for path in commands_dir.glob("*.py"):
-        if path.name.startswith("_"):
+        if path.name.startswith("_") or path.name == "__init__.py":
             continue
         ext = f"modules.commands.{path.stem}"
         try:
@@ -102,6 +117,9 @@ async def setup_hook():
 
     async def _close_with_http():
         try:
+            if refresh_lobby_panel_view.is_running():
+                refresh_lobby_panel_view.cancel()
+
             if hasattr(api_client, "close_http_session"):
                 await api_client.close_http_session()
             if hasattr(valorant_api, "close_http_session"):
@@ -122,22 +140,47 @@ async def setup_hook():
     except Exception as e:
         logger.error(f"❌ Ошибка синхронизации команд: {e}")
 
-    # Отправка кнопки "Создать лобби" в канал при запуске
+    # Отправка/восстановление панели "Создать лобби"
     if LOBBY_CHANNEL_ID:
         try:
             channel = await bot.fetch_channel(LOBBY_CHANNEL_ID)
-            if channel:
-                file_path = base_dir / "modules" / "pictures" / "Создание лобби.png"
-                file = File(fp=file_path, filename="создание_лобби.jpg")
-                view = LobbyMenuView(bot)
-                bot.lobby_panel_message = await channel.send(file=file, view=view)
 
-                if not refresh_lobby_panel_view.is_running():
+            if channel:
+                view = LobbyMenuView(bot)
+                restored = False
+
+                # Если известен ID старого сообщения — пробуем восстановить панель
+                if LOBBY_PANEL_MESSAGE_ID:
+                    try:
+                        message = await channel.fetch_message(LOBBY_PANEL_MESSAGE_ID)
+                        await message.edit(view=view)
+                        bot.lobby_panel_message = message
+                        restored = True
+                        logger.success(f"♻️ Восстановлена старая панель лобби: {LOBBY_PANEL_MESSAGE_ID}")
+                    except Exception as e:
+                        logger.warning(f"⚠ Не удалось восстановить старую панель лобби: {e}")
+
+                # Если старую панель не нашли — создаём новую
+                if not restored:
+                    file_path = BASE_DIR / "modules" / "pictures" / "Создание лобби.png"
+
+                    if not file_path.exists():
+                        logger.warning(f"⚠ Картинка панели лобби не найдена: {file_path}")
+                    else:
+                        file = File(fp=file_path, filename="создание_лобби.jpg")
+                        bot.lobby_panel_message = await channel.send(file=file, view=view)
+
+                        logger.success(
+                            "📨 Отправлена новая кнопка создания лобби. "
+                            f"ID сообщения: {bot.lobby_panel_message.id}. "
+                            "Добавь его в .env как LOBBY_PANEL_MESSAGE_ID, чтобы не создавать дубли."
+                        )
+
+                if bot.lobby_panel_message and not refresh_lobby_panel_view.is_running():
                     refresh_lobby_panel_view.start()
 
-                logger.success("📨 Отправлена кнопка создания лобби.")
         except Exception as e:
-            logger.warning(f"⚠ Ошибка при отправке кнопки лобби: {e}")
+            logger.warning(f"⚠ Ошибка при отправке/восстановлении кнопки лобби: {e}")
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: Exception):
@@ -178,7 +221,7 @@ if __name__ == "__main__":
         if getattr(e, "status", None) == 429:
             logger.error("⚠ Discord вернул 429 Too Many Requests при логине. Ждём 60 секунд и перезапускаем процесс.")
             time.sleep(60)
-            os.execv(sys.executable, [sys.executable, "-m", "modules.core.main"])
+            os.execv(sys.executable, [sys.executable, *sys.argv])
 
         # Любая другая ошибка – пусть падает, чтобы мы увидели реальную проблему
         raise
