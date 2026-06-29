@@ -1,17 +1,22 @@
 from django.db import models
-from django.contrib.auth.models import User
+from django.conf import settings
 from django.utils import timezone
 
 # Create your models here.
 class Player(models.Model):
     discord_id = models.BigIntegerField(unique=True)
-    username = models.CharField(max_length=255)
+    username = models.CharField(max_length=255, blank=True, default="")
     rank = models.CharField(max_length=50, default="Unranked")
     rank_last_sync = models.DateTimeField(null=True, blank=True, db_index=True)
     wins = models.PositiveIntegerField(default=0, db_index=True)
     matches = models.PositiveIntegerField(default=0, db_index=True)
     last_name_change = models.DateTimeField(null=True, blank=True)
-    user = models.OneToOneField(User, on_delete=models.SET_NULL, null=True, blank=True)
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
 
     def __str__(self):
         return f"{self.username} ({self.rank})"

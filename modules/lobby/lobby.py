@@ -50,9 +50,12 @@ RANDOM_LOBBY_DESCRIPTION = (
 
 def is_king_event_open() -> bool:
     """
-    KING доступен только по средам с 08:00 до 00:00 по BOT_TZ.
-    После полуночи уже четверг, поэтому кнопка исчезает.
+    KING доступен только по средам с 08:00 до 23:59 по BOT_TZ.
+    Для теста можно включить KING_ALWAYS_OPEN=true.
     """
+    if os.getenv("KING_ALWAYS_OPEN", "false").lower() == "true":
+        return True
+
     tz_name = os.getenv("BOT_TZ", "Asia/Almaty")
 
     try:
@@ -62,8 +65,13 @@ def is_king_event_open() -> bool:
 
     now = datetime.now(tz)
 
-    # Monday=0, Tuesday=1, Wednesday=2
-    return True
+    if now.weekday() != 2:
+        return False
+
+    start = dt_time(hour=8, minute=0)
+    end = dt_time(hour=23, minute=59, second=59)
+
+    return start <= now.time() <= end
 
 #PRIZES_TEXT = ()
 
@@ -552,14 +560,6 @@ class Lobby:
                         item.disabled = True
                 await self.message.edit(view=self.view)
                 await self.close_lobby()
-
-            for m in list(self.members):
-                ban = await is_banned(m.id)
-                if ban.get("banned"):
-                    self.members.remove(m)
-                    await self.channel.send(
-                        f"⛔ {m.mention} был исключён из лобби (забанен до {ban.get('expires_at')})."
-                    )
 
     async def start_fixed_teams_match(
             self,

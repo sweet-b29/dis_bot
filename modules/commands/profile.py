@@ -179,20 +179,6 @@ class EditProfileModal(discord.ui.Modal, title="Обновить Riot ID и ра
             )
             return
 
-        # на всякий случай сбросим кэш профиля
-        #try:
-        #    await profiles_cache.invalidate(interaction.user.id)
-        #except Exception:
-            # кэш — не критично, молча игнорируем
-        #    pass
-
-        await interaction.followup.send(
-            f"✅ Профиль обновлён.\n"
-            f"Riot ID: `{riot_id_value}`\n"
-            f"Ранг: **{rank}** (region: `{region_used}`)",
-            ephemeral=True,
-        )
-
 
 class ProfileCardView(discord.ui.View):
     def __init__(self):

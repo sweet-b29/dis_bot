@@ -278,16 +278,16 @@ class Draft:
             self.match_id = mid
             self.lobby.match_id = mid
 
-            ready_data = await api_client.mark_match_ready(mid)
-            if not ready_data:
+            ok, ready_data = await api_client.mark_match_ready(mid)
+            if not ok:
                 self._match_created = False
-                await self.channel.send("❌ Матч создан, но не переведён в READY.")
+                await self.channel.send(f"❌ Матч создан, но не переведён в READY: `{ready_data}`")
                 return
 
-            started_data = await api_client.start_match(mid)
-            if not started_data:
+            ok, started_data = await api_client.start_match(mid)
+            if not ok:
                 self._match_created = False
-                await self.channel.send("❌ Матч создан, но не запущен в Django.")
+                await self.channel.send(f"❌ Матч создан, но не запущен в Django: `{started_data}`")
                 return
 
             logger.success(f"Матч сохранён в Django: {match_data}")
@@ -323,6 +323,7 @@ class Draft:
         )
 
         await self.finalize_match()
+        return bool(self.match_id)
 
     async def create_voice_channels(self):
         category = self.channel.category
@@ -499,5 +500,12 @@ class SideSelectView(discord.ui.View):
             child.disabled = True
 
         await interaction.response.edit_message(view=self)
-        await self.draft.send_map_embed()
+        ok = await self.draft.send_map_embed()
+        if not ok:
+            await interaction.followup.send(
+                "❌ Матч не был сохранён в Django, поэтому голосовые каналы не созданы.",
+                ephemeral=True,
+            )
+            return
+
         await self.draft.create_voice_channels()

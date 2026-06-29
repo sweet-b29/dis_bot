@@ -55,13 +55,28 @@ class PlayerViewSet(viewsets.ModelViewSet):
         } for p in qs]
         return Response(data)
 
-    @action(detail=True, methods=['post'], url_path='set_wins', lookup_field='discord_id')
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="set_wins",
+        lookup_field="discord_id",
+        authentication_classes=[TokenAuthentication],
+        permission_classes=[IsAdminUser],
+    )
     def set_wins(self, request, discord_id=None):
         try:
             player = self.get_object()
             new_wins = request.data.get("wins")
             if new_wins is None:
                 return Response({'error': 'wins не передан'}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                new_wins = int(new_wins)
+            except (TypeError, ValueError):
+                return Response({"error": "wins must be integer"}, status=status.HTTP_400_BAD_REQUEST)
+
+            if new_wins < 0:
+                return Response({"error": "wins cannot be negative"}, status=status.HTTP_400_BAD_REQUEST)
 
             player.wins = int(new_wins)
             player.save()
@@ -129,7 +144,7 @@ class PlayerViewSet(viewsets.ModelViewSet):
                 return Response({"error": "rank too long"}, status=400)
 
             player.rank = rank
-            player.rank_last_sync = None  # время синка проставит фон/бот при следующем запросе
+            player.rank_last_sync = timezone.now()
 
         try:
             player.save()

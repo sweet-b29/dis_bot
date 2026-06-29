@@ -19,7 +19,10 @@ from decouple import config
 # Здесь дефолт только для локальной разработки.
 SECRET_KEY = config("SECRET_KEY", default="dev-secret-key-change-me")
 
-DEBUG = config("DEBUG", default=True, cast=bool)
+DEBUG = config("DEBUG", default=False, cast=bool)
+
+if not DEBUG and SECRET_KEY == "dev-secret-key-change-me":
+    raise RuntimeError("SECRET_KEY must be set in production.")
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -31,11 +34,27 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 # ALLOWED_HOSTS и CSRF
-ALLOWED_HOSTS = [h for h in config('ALLOWED_HOSTS', default='127.0.0.1,localhost,.up.railway.app').split(',') if h]
-CSRF_TRUSTED_ORIGINS = (
-    [f"http://{h}" for h in ALLOWED_HOSTS if h and not h.startswith('.')] +
-    [f"https://{h}" for h in ALLOWED_HOSTS if h and not h.startswith('.')]
-)
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in config(
+        "ALLOWED_HOSTS",
+        default="127.0.0.1,localhost,.up.railway.app",
+    ).split(",")
+    if host.strip()
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in config(
+        "CSRF_TRUSTED_ORIGINS",
+        default=(
+            "http://127.0.0.1,"
+            "http://localhost,"
+            "https://*.up.railway.app"
+        ),
+    ).split(",")
+    if origin.strip()
+]
 
 
 # Application definition
@@ -167,9 +186,13 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_DIRS = [BASE_DIR / "static"]
+
+STATICFILES_DIRS = []
+local_static_dir = BASE_DIR / "static"
+if local_static_dir.exists():
+    STATICFILES_DIRS.append(local_static_dir)
 
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 

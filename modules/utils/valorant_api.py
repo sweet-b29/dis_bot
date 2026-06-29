@@ -158,7 +158,10 @@ async def fetch_valorant_rank(riot_id: str) -> Tuple[str, str]:
 
     try:
         # ---------- 1. Получаем puuid и регион ----------
-        account_url = f"{HENRIKDEV_BASE_URL}/valorant/v1/account/{quote(name)}/{quote(tag)}"
+        account_url = (
+            f"{HENRIKDEV_BASE_URL}/valorant/v1/account/"
+            f"{quote(name, safe='')}/{quote(tag, safe='')}"
+        )
 
         await _respect_rate_limit()
         async with session.get(account_url, headers=headers) as resp:
@@ -193,7 +196,10 @@ async def fetch_valorant_rank(riot_id: str) -> Tuple[str, str]:
                 raise ValorantRankError("Не удалось получить puuid игрока из HenrikDev", status=status)
 
         # ---------- 2. Получаем mmr по puuid ----------
-        mmr_url = f"{HENRIKDEV_BASE_URL}/valorant/v1/by-puuid/mmr/{region}/{quote(puuid)}"
+        mmr_url = (
+            f"{HENRIKDEV_BASE_URL}/valorant/v1/by-puuid/mmr/"
+            f"{region}/{quote(puuid, safe='')}"
+        )
 
         await _respect_rate_limit()
         async with session.get(mmr_url, headers=headers) as resp:
