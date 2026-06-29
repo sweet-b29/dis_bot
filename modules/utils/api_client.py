@@ -45,10 +45,13 @@ def get_session():
     return aiohttp.ClientSession(headers=HEADERS, timeout=DEFAULT_TIMEOUT)
 
 def _url(path: str) -> str:
+    if not API_BASE_URL:
+        raise RuntimeError("DJANGO_API_URL is not configured.")
     return API_BASE_URL.rstrip("/") + "/" + path.lstrip("/")
 
 async def _request(method: str, path: str, **kwargs):
-    assert _session is not None, "HTTP session is not set. Call api_client.set_http_session(session)."
+    if _session is None or _session.closed:
+        raise RuntimeError("HTTP session is not set. Call api_client.set_http_session(session).")
     url = _url(path)
     retries = kwargs.pop("retries", 3)
     backoff = kwargs.pop("backoff", 0.5)
@@ -99,18 +102,30 @@ async def get_player_profile(discord_id: int) -> dict:
             return {}
         return await _safe_json(resp)
 
-async def update_player_profile(discord_id: int, username: str | None = None, rank: str | None = None, create_if_not_exist: bool = False) -> dict:
-    payload: dict = {"discord_id": discord_id, "create_if_not_exist": create_if_not_exist}
+async def update_player_profile(
+    discord_id: int,
+    username: str | None = None,
+    rank: str | None = None,
+    create_if_not_exist: bool = False,
+) -> dict:
+    payload: dict = {
+        "discord_id": discord_id,
+        "create_if_not_exist": create_if_not_exist,
+    }
+
     if username is not None:
         payload["username"] = username
+
     if rank is not None:
         payload["rank"] = rank
 
-    async with (await _request("PATCH", "players/update_profile/", json=payload) as resp):
+    async with await _request("PATCH", "players/update_profile/", json=payload) as resp:
         body = await resp.text()
+
         if resp.status not in (200, 201):
             logger.error(f"PATCH update_profile -> {resp.status}: {body[:400]}")
             raise RuntimeError(f"update_profile failed: {resp.status}")
+
         try:
             return json.loads(body) if body else {}
         except Exception:
@@ -124,7 +139,15 @@ async def set_player_wins(discord_id: int, wins: int):
 
 async def get_all_players():
     async with await _request("GET", "players/") as resp:
-        return await _safe_json(resp)
+        data = await _safe_json(resp)
+
+        if isinstance(data, dict) and isinstance(data.get("results"), list):
+            return data["results"]
+
+        if isinstance(data, list):
+            return data
+
+        return []
 
 async def add_win(discord_id: int):
     async with await _request("POST", f"players/{discord_id}/add_win/") as resp:

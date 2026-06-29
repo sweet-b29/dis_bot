@@ -116,11 +116,20 @@ async def ensure_fresh_rank(
 
     # 5) Логика перезаписи
     if new_rank == current_rank:
-        # вообще ничего не изменилось
         logger.debug(
             f"[rank_sync] rank unchanged for {discord_id} ({riot_id}): {current_rank}"
         )
-        return None if return_updated_only else profile
+
+        try:
+            updated = await api_client.update_player_profile(
+                discord_id,
+                rank=new_rank,
+                create_if_not_exist=False,
+            )
+            return None if return_updated_only else (updated or profile)
+        except Exception as e:
+            logger.error(f"[rank_sync] failed to refresh rank_last_sync for {discord_id}: {e}")
+            return None if return_updated_only else profile
 
     if (
         new_rank == "Unranked"

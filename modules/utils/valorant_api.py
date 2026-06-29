@@ -61,19 +61,24 @@ class ValorantRankError(Exception):
         return self.message
 
 _last_request_ts: float = 0.0
+_rate_limit_lock = asyncio.Lock()
 _rank_cache: dict[str, tuple[float, str, str]] = {}  # riot_id_lower -> (ts, rank, region)
 
 async def _respect_rate_limit():
     """
-    Очень простой rate-limit:
-    не больше 1 запроса к HenrikDev раз в _MIN_INTERVAL_SECONDS.
+    Не больше 1 запроса к HenrikDev раз в _MIN_INTERVAL_SECONDS.
+    Защищено lock'ом, чтобы параллельные корутины не обходили лимит.
     """
     global _last_request_ts
-    now = time.monotonic()
-    delta = now - _last_request_ts
-    if delta < _MIN_INTERVAL_SECONDS:
-        await asyncio.sleep(_MIN_INTERVAL_SECONDS - delta)
-    _last_request_ts = time.monotonic()
+
+    async with _rate_limit_lock:
+        now = time.monotonic()
+        delta = now - _last_request_ts
+
+        if delta < _MIN_INTERVAL_SECONDS:
+            await asyncio.sleep(_MIN_INTERVAL_SECONDS - delta)
+
+        _last_request_ts = time.monotonic()
 
 
 def _normalize_rank(raw: Optional[str]) -> str:
