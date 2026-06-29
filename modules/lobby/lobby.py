@@ -308,6 +308,7 @@ class Lobby:
         self.max_players = max_players
         self.image_message: discord.Message | None = None
         self._win_lock = asyncio.Lock()
+        self._members_lock = asyncio.Lock()
 
         # Для каждого матча нужен новый external_id.
         # Особенно важно для KING, где в одном канале может быть несколько раундов.
@@ -477,78 +478,88 @@ class Lobby:
         self.close_at = None
 
     async def add_member(self, interaction: discord.Interaction):
-        member = interaction.user
+        async with self._members_lock:
+            member = interaction.user
 
-        if len(self.members) >= self.max_players:
-            await interaction.followup.send(
-                "❌ Лобби уже заполнено, вы не можете присоединиться.",
-                ephemeral=True
-            )
-            return
-
-        if member in self.members:
-            try:
-                await interaction.response.send_message(
-                    "❗ Вы уже в лобби. Повторное нажатие не требуется.",
-                    ephemeral=True
-                )
-            except discord.InteractionResponded:
-                await interaction.followup.send(
-                    "❗ Вы уже в лобби.",
-                    ephemeral=True
-                )
-            return
-
-        self.members.append(member)
-
-        # Получаем профили всех участников
-        players_data = []
-        for m in self.members:
-            profile = await profiles_cache.get(m.id)
-            players_data.append({
-                "id": profile.get("id"),
-                "discord_id": m.id,
-                "username": profile.get("username", "—"),
-                "display_name": m.display_name,
-                "rank": (profile.get("rank") or "Unranked"),
-                "wins": profile.get("wins", 0),
-                "matches": profile.get("matches", 0),
-            })
-
-        # Генерируем изображение
-        top_ids = await get_leaderboard_top(3)  # список discord_id топ-3
-        image_path = generate_lobby_image(players_data, top_ids=top_ids)
-
-        file = discord.File(image_path, filename="lobby_dynamic.png")
-
-        if self.image_message is None:
-            self.image_message = await self.channel.send(
-                file=file,
-                content=None,
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-        else:
-            await self.image_message.edit(
-                content=None,
-                attachments=[file],
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-
-        if len(self.members) >= self.max_players and not self.draft_started:
-            self.draft_started = True
-            for item in self.view.children:
-                if isinstance(item, discord.ui.Button):
-                    item.disabled = True
-            await self.message.edit(view=self.view)
-            await self.close_lobby()
-
-        for m in list(self.members):
-            ban = await is_banned(m.id)
+            ban = await is_banned(member.id)
             if ban.get("banned"):
-                self.members.remove(m)
-                await self.channel.send(
-                    f"⛔ {m.mention} был исключён из лобби (забанен до {ban.get('expires_at')})."
+                text = render_ban_message(
+                    expires_at_iso=ban.get("expires_at", ""),
+                    reason=ban.get("reason"),
                 )
+                await interaction.followup.send(text, ephemeral=True)
+                return
+
+            if len(self.members) >= self.max_players:
+                await interaction.followup.send(
+                    "❌ Лобби уже заполнено, вы не можете присоединиться.",
+                    ephemeral=True
+                )
+                return
+
+            if member in self.members:
+                try:
+                    await interaction.response.send_message(
+                        "❗ Вы уже в лобби. Повторное нажатие не требуется.",
+                        ephemeral=True
+                    )
+                except discord.InteractionResponded:
+                    await interaction.followup.send(
+                        "❗ Вы уже в лобби.",
+                        ephemeral=True
+                    )
+                return
+
+            self.members.append(member)
+
+            # Получаем профили всех участников
+            players_data = []
+            for m in self.members:
+                profile = await profiles_cache.get(m.id)
+                players_data.append({
+                    "id": profile.get("id"),
+                    "discord_id": m.id,
+                    "username": profile.get("username", "—"),
+                    "display_name": m.display_name,
+                    "rank": (profile.get("rank") or "Unranked"),
+                    "wins": profile.get("wins", 0),
+                    "matches": profile.get("matches", 0),
+                })
+
+            # Генерируем изображение
+            top_ids = await get_leaderboard_top(3)  # список discord_id топ-3
+            image_path = generate_lobby_image(players_data, top_ids=top_ids)
+
+            file = discord.File(image_path, filename="lobby_dynamic.png")
+
+            if self.image_message is None:
+                self.image_message = await self.channel.send(
+                    file=file,
+                    content=None,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            else:
+                await self.image_message.edit(
+                    content=None,
+                    attachments=[file],
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+
+            if len(self.members) >= self.max_players and not self.draft_started:
+                self.draft_started = True
+                for item in self.view.children:
+                    if isinstance(item, discord.ui.Button):
+                        item.disabled = True
+                await self.message.edit(view=self.view)
+                await self.close_lobby()
+
+            for m in list(self.members):
+                ban = await is_banned(m.id)
+                if ban.get("banned"):
+                    self.members.remove(m)
+                    await self.channel.send(
+                        f"⛔ {m.mention} был исключён из лобби (забанен до {ban.get('expires_at')})."
+                    )
 
     async def start_fixed_teams_match(
             self,
@@ -948,24 +959,24 @@ class Lobby:
             except Exception as e:
                 logger.error(f"❌ Ошибка при удалении текстового канала: {e}")
 
-async def delayed_win_buttons(self, delay: int = 1200):
-    await asyncio.sleep(delay)
+    async def delayed_win_buttons(self, delay: int = 1200):
+        await asyncio.sleep(delay)
 
-    if not self.channel or not self.guild.get_channel(self.channel.id):
-        return
+        if not self.channel or not self.guild.get_channel(self.channel.id):
+            return
 
-    if not await self._wait_match_id(timeout=60.0):
+        if not await self._wait_match_id(timeout=60.0):
+            await self.channel.send(
+                "⚠ Матч не создан (нет match_id). Победу сейчас зафиксировать нельзя. "
+                "Проверьте, что у всех есть профиль и API доступен."
+            )
+            return
+
         await self.channel.send(
-            "⚠ Матч не создан (нет match_id). Победу сейчас зафиксировать нельзя. "
-            "Проверьте, что у всех есть профиль и API доступен."
+            "⚔ Капитаны, подтвердите победу, нажав на кнопку ниже:",
+            view=WinButtonView(self),
+            allowed_mentions=discord.AllowedMentions.none(),
         )
-        return
-
-    await self.channel.send(
-        "⚔ Капитаны, подтвердите победу, нажав на кнопку ниже:",
-        view=WinButtonView(self),
-        allowed_mentions=discord.AllowedMentions.none(),
-    )
 
 class LobbyRoomCodeModal(discord.ui.Modal, title="Введите код комнаты Valorant"):
     room_code = discord.ui.TextInput(

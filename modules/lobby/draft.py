@@ -278,6 +278,18 @@ class Draft:
             self.match_id = mid
             self.lobby.match_id = mid
 
+            ready_data = await api_client.mark_match_ready(mid)
+            if not ready_data:
+                self._match_created = False
+                await self.channel.send("❌ Матч создан, но не переведён в READY.")
+                return
+
+            started_data = await api_client.start_match(mid)
+            if not started_data:
+                self._match_created = False
+                await self.channel.send("❌ Матч создан, но не запущен в Django.")
+                return
+
             logger.success(f"Матч сохранён в Django: {match_data}")
         except Exception as e:
             self._match_created = False
@@ -489,6 +501,3 @@ class SideSelectView(discord.ui.View):
         await interaction.response.edit_message(view=self)
         await self.draft.send_map_embed()
         await self.draft.create_voice_channels()
-
-def setup(bot):
-    pass
